@@ -1,0 +1,28 @@
+{
+  "name": "legal-agent-platform",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @legal-agent/api",
+    "dev:worker": "npm run dev:worker -w @legal-agent/api",
+    "dev:web": "npm run dev -w @legal-agent/web",
+    "build": "npm run build -w @legal-agent/shared && npm run build -w @legal-agent/api && npm run build -w @legal-agent/web",
+    "lint": "npm run lint -w @legal-agent/shared && npm run lint -w @legal-agent/api && npm run lint -w @legal-agent/web",
+    "format": "npx @biomejs/biome format --write .",
+    "format:check": "npx @biomejs/biome format .",
+    "test": "npm run test -w @legal-agent/api"
+  },
+  "dependencies": {
+    "@fastify/formbody": "^8.0.2",
+    "@node-saml/node-saml": "^5.1.0",
+    "nodemailer": "^8.0.4",
+    "otpauth": "^9.5.0"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^7.0.11"
+  }
+}
