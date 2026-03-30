@@ -379,9 +379,19 @@ export const repository = {
     };
   },
 
-  async listTenants() {
-    const result = await pool.query("select * from tenants order by created_at desc");
+  async listTenants(options?: { limit?: number; offset?: number }) {
+    const limit = Math.min(options?.limit ?? 200, 200);
+    const offset = options?.offset ?? 0;
+    const result = await pool.query(
+      "select * from tenants order by created_at desc limit $1 offset $2",
+      [limit, offset]
+    );
     return result.rows.map(mapTenant);
+  },
+
+  async countTenants() {
+    const result = await pool.query<{ count: string }>("select count(*)::text as count from tenants");
+    return Number(result.rows[0]?.count ?? "0");
   },
 
   async createTenant(input: { id: string; name: string; region: string; plan: string }) {
@@ -407,12 +417,22 @@ export const repository = {
     return result.rows[0] ? mapTenant(result.rows[0]) : undefined;
   },
 
-  async listAttorneys(tenantId: string) {
+  async listAttorneys(tenantId: string, options?: { limit?: number; offset?: number }) {
+    const limit = Math.min(options?.limit ?? 200, 200);
+    const offset = options?.offset ?? 0;
     const result = await pool.query(
-      "select * from attorneys where tenant_id = $1 order by created_at desc",
-      [tenantId]
+      "select * from attorneys where tenant_id = $1 order by created_at desc limit $2 offset $3",
+      [tenantId, limit, offset]
     );
     return result.rows.map(mapAttorney);
+  },
+
+  async countAttorneys(tenantId: string) {
+    const result = await pool.query<{ count: string }>(
+      "select count(*)::text as count from attorneys where tenant_id = $1",
+      [tenantId]
+    );
+    return Number(result.rows[0]?.count ?? "0");
   },
 
   async listAttorneysForScim(input: { tenantId: string; startIndex: number; count: number; email?: string }) {
@@ -518,12 +538,22 @@ export const repository = {
     return result.rows[0] ? mapAttorney(result.rows[0]) : undefined;
   },
 
-  async listApiKeys(tenantId: string) {
+  async listApiKeys(tenantId: string, options?: { limit?: number; offset?: number }) {
+    const limit = Math.min(options?.limit ?? 200, 200);
+    const offset = options?.offset ?? 0;
     const result = await pool.query(
-      "select * from api_keys where tenant_id = $1 order by created_at desc",
-      [tenantId]
+      "select * from api_keys where tenant_id = $1 order by created_at desc limit $2 offset $3",
+      [tenantId, limit, offset]
     );
     return result.rows.map(mapApiKey);
+  },
+
+  async countApiKeys(tenantId: string) {
+    const result = await pool.query<{ count: string }>(
+      "select count(*)::text as count from api_keys where tenant_id = $1",
+      [tenantId]
+    );
+    return Number(result.rows[0]?.count ?? "0");
   },
 
   async createApiKey(input: {
@@ -610,12 +640,22 @@ export const repository = {
     };
   },
 
-  async listInvitations(tenantId: string) {
+  async listInvitations(tenantId: string, options?: { limit?: number; offset?: number }) {
+    const limit = Math.min(options?.limit ?? 200, 200);
+    const offset = options?.offset ?? 0;
     const result = await pool.query(
-      "select * from invitations where tenant_id = $1 order by created_at desc",
-      [tenantId]
+      "select * from invitations where tenant_id = $1 order by created_at desc limit $2 offset $3",
+      [tenantId, limit, offset]
     );
     return result.rows.map(mapInvitation);
+  },
+
+  async countInvitations(tenantId: string) {
+    const result = await pool.query<{ count: string }>(
+      "select count(*)::text as count from invitations where tenant_id = $1",
+      [tenantId]
+    );
+    return Number(result.rows[0]?.count ?? "0");
   },
 
   async createInvitation(input: {
@@ -1652,21 +1692,29 @@ export const repository = {
 
   async getMatterDocuments(matterId: string, tenantId: string) {
     const result = await pool.query(
-      "select * from documents where matter_id = $1 and tenant_id = $2 order by created_at desc",
+      "select * from documents where matter_id = $1 and tenant_id = $2 order by created_at desc limit 500",
       [matterId, tenantId]
     );
     return result.rows.map(mapDocument);
   },
 
-  async getDocumentEmbeddings(tenantId: string) {
+  // TODO: Issue #10 — When pgvector extension is available, replace this with a
+  // proper vector similarity search using the <=> operator:
+  //   SELECT d.*, c.embedding <=> $2::vector AS distance
+  //   FROM documents d JOIN document_chunks c ON ...
+  //   WHERE d.tenant_id = $1
+  //   ORDER BY distance ASC LIMIT 20
+  async getDocumentEmbeddings(tenantId: string, options?: { limit?: number }) {
+    // Default to 100 documents max for embedding search to avoid memory issues
+    const limit = Math.min(options?.limit ?? 100, 500);
     const result = await pool.query(
       `select d.*, c.embedding
        from documents d
        left join document_chunks c on c.document_id = d.id and c.chunk_index = 0
        where d.tenant_id = $1
        order by d.created_at desc
-       limit 500`,
-      [tenantId]
+       limit $2`,
+      [tenantId, limit]
     );
 
     return result.rows.map((row) => ({

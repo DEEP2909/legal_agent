@@ -67,6 +67,7 @@ import {
 } from "./security.js";
 import { cosineSimilarity } from "./vector.js";
 import { config } from "./config.js";
+import { withTransaction } from "./transaction.js";
 
 const defaultPlaybook = [
   "Indemnity cap must not exceed 20% of purchase price.",
@@ -588,19 +589,22 @@ export const legalWorkflowService = {
     }
 
     const recoveryCodeHashes = getRecoveryCodeHashes(enrollment.recovery_code_hashes);
-    await repository.enableAttorneyMfa({
-      attorneyId: session.attorneyId,
-      secret: encryptSecret(secretBase32),
-      recoveryCodeHashes
-    });
-    await repository.deleteMfaEnrollment(session.attorneyId);
-    await repository.recordAuditEvent({
-      id: randomUUID(),
-      tenantId: session.tenantId,
-      actorAttorneyId: session.attorneyId,
-      eventType: "auth.mfa_enabled",
-      objectType: "attorney",
-      objectId: session.attorneyId
+
+    await withTransaction(async () => {
+      await repository.enableAttorneyMfa({
+        attorneyId: session.attorneyId,
+        secret: encryptSecret(secretBase32),
+        recoveryCodeHashes
+      });
+      await repository.deleteMfaEnrollment(session.attorneyId);
+      await repository.recordAuditEvent({
+        id: randomUUID(),
+        tenantId: session.tenantId,
+        actorAttorneyId: session.attorneyId,
+        eventType: "auth.mfa_enabled",
+        objectType: "attorney",
+        objectId: session.attorneyId
+      });
     });
 
     return {
@@ -1062,28 +1066,34 @@ export const legalWorkflowService = {
       throw new Error("Invitation token is invalid or expired.");
     }
 
-    const attorney = await repository.createAttorney({
-      id: randomUUID(),
-      tenantId: String(invitation.tenant_id),
-      email: String(invitation.email),
-      fullName: input.fullName || String(invitation.full_name ?? invitation.email),
-      role: invitation.role as AuthSession["role"],
-      practiceArea: String(invitation.practice_area),
-      passwordHash: await hashPassword(input.password),
-      isTenantAdmin: Boolean(invitation.is_tenant_admin)
-    });
+    const passwordHash = await hashPassword(input.password);
 
-    await repository.markInvitationAccepted(String(invitation.id));
-    await repository.recordAuditEvent({
-      id: randomUUID(),
-      tenantId: String(invitation.tenant_id),
-      actorAttorneyId: attorney.id,
-      eventType: "auth.invitation_accepted",
-      objectType: "invitation",
-      objectId: String(invitation.id),
-      metadata: {
-        attorneyId: attorney.id
-      }
+    const attorney = await withTransaction(async () => {
+      const created = await repository.createAttorney({
+        id: randomUUID(),
+        tenantId: String(invitation.tenant_id),
+        email: String(invitation.email),
+        fullName: input.fullName || String(invitation.full_name ?? invitation.email),
+        role: invitation.role as AuthSession["role"],
+        practiceArea: String(invitation.practice_area),
+        passwordHash,
+        isTenantAdmin: Boolean(invitation.is_tenant_admin)
+      });
+
+      await repository.markInvitationAccepted(String(invitation.id));
+      await repository.recordAuditEvent({
+        id: randomUUID(),
+        tenantId: String(invitation.tenant_id),
+        actorAttorneyId: created.id,
+        eventType: "auth.invitation_accepted",
+        objectType: "invitation",
+        objectId: String(invitation.id),
+        metadata: {
+          attorneyId: created.id
+        }
+      });
+
+      return created;
     });
 
     const session = await repository.getAttorneySession(attorney.id);
@@ -2658,42 +2668,46 @@ export const legalWorkflowService = {
   }) {
     const tenantId = randomUUID();
     const attorneyId = randomUUID();
-    const tenant = await repository.createTenant({
-      id: tenantId,
-      name: input.name,
-      region: input.region,
-      plan: input.plan
-    });
-
-    const attorney = await repository.createAttorney({
-      id: attorneyId,
-      tenantId,
-      email: input.adminEmail,
-      fullName: input.adminFullName,
-      role: "admin",
-      practiceArea: "Firm Administration",
-      passwordHash: await hashPassword(input.adminPassword),
-      isTenantAdmin: true
-    });
-
+    const passwordHash = await hashPassword(input.adminPassword);
     const rawKey = generateRawApiKey();
-    const apiKey = await repository.createApiKey({
-      id: randomUUID(),
-      tenantId,
-      attorneyId,
-      name: "Initial Tenant Key",
-      keyPrefix: getApiKeyPrefix(rawKey),
-      keyHash: hashApiKey(rawKey),
-      role: "admin"
-    });
 
-    return {
-      tenant,
-      attorney,
-      apiKey: {
-        ...apiKey,
-        rawKey
-      }
-    };
+    return withTransaction(async () => {
+      const tenant = await repository.createTenant({
+        id: tenantId,
+        name: input.name,
+        region: input.region,
+        plan: input.plan
+      });
+
+      const attorney = await repository.createAttorney({
+        id: attorneyId,
+        tenantId,
+        email: input.adminEmail,
+        fullName: input.adminFullName,
+        role: "admin",
+        practiceArea: "Firm Administration",
+        passwordHash,
+        isTenantAdmin: true
+      });
+
+      const apiKey = await repository.createApiKey({
+        id: randomUUID(),
+        tenantId,
+        attorneyId,
+        name: "Initial Tenant Key",
+        keyPrefix: getApiKeyPrefix(rawKey),
+        keyHash: hashApiKey(rawKey),
+        role: "admin"
+      });
+
+      return {
+        tenant,
+        attorney,
+        apiKey: {
+          ...apiKey,
+          rawKey
+        }
+      };
+    });
   }
 };
