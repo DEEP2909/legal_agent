@@ -25,14 +25,39 @@ An end-to-end legal workflow automation MVP for Indian and South Asian law firms
 - Next.js web app for matters, review, uploads, and research
 - Docker Compose stack for Postgres and MinIO
 
+## Security Features
+
+The platform includes comprehensive security measures:
+
+- **Authentication**: JWT tokens, API keys, MFA (TOTP + WebAuthn), SSO (OIDC/SAML)
+- **Account Protection**: Lockout after failed attempts, secure password reset with expiring tokens
+- **Input Validation**: Parameterized queries, path traversal prevention, content-type validation
+- **Rate Limiting**: Configurable limits on auth endpoints to prevent brute force attacks
+- **Encryption**: AES-256-GCM for secrets at rest, bcrypt for passwords
+- **Audit Logging**: All security events tracked with timestamps and actor IDs
+- **CSRF Protection**: State parameters for OAuth flows, secure cookie handling
+
 ## Monorepo layout
 
-- `apps/api`: Fastify API, persistence, OCR, worker, and OpenAI integrations
-- `apps/web`: Next.js front end
-- `packages/shared`: shared product types
-- `db/schema.sql`: database schema
-- `docker-compose.yml`: local Postgres + MinIO stack
-- `DEPLOYMENT.md`: production deployment guidance
+```
+├── apps/
+│   ├── api/                    # Fastify API server
+│   │   └── src/
+│   │       ├── services/       # Domain service modules
+│   │       ├── repositories/   # Data access layer
+│   │       └── __tests__/      # Unit tests (32 tests)
+│   └── web/                    # Next.js frontend
+│       └── app/
+│           └── components/     # Extracted UI components
+│               ├── admin/      # Admin panel components
+│               ├── auth/       # Authentication forms
+│               ├── security/   # Security settings
+│               └── shared/     # Reusable components
+├── packages/shared/            # Shared TypeScript types
+├── db/schema.sql              # Database schema
+├── docker-compose.yml         # Local Postgres + MinIO stack
+└── DEPLOYMENT.md              # Production deployment guidance
+```
 
 ## Requirements
 
@@ -320,19 +345,44 @@ curl http://localhost:4000/api/research/query \
 
 ## Implementation notes
 
-- Postgres initialization and demo seeding: [apps/api/src/database.ts](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/apps/api/src/database.ts)
-- SQL repository layer: [apps/api/src/repository.ts](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/apps/api/src/repository.ts)
-- Auth and JWT handling: [apps/api/src/auth.ts](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/apps/api/src/auth.ts)
-- Passwords, token hashing, and invite/reset token generation: [apps/api/src/security.ts](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/apps/api/src/security.ts)
-- S3/local storage abstraction: [apps/api/src/storage.ts](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/apps/api/src/storage.ts)
-- OCR pipeline: [apps/api/src/ocr.ts](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/apps/api/src/ocr.ts)
-- Worker entrypoint: [apps/api/src/worker-main.ts](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/apps/api/src/worker-main.ts)
-- Background ingestion worker: [apps/api/src/worker.ts](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/apps/api/src/worker.ts)
-- Web app auth/admin shell: [apps/web/app/dashboard-app.tsx](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/apps/web/app/dashboard-app.tsx)
-- Deployment guide: [DEPLOYMENT.md](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/DEPLOYMENT.md)
+- Postgres initialization and demo seeding: `apps/api/src/database.ts`
+- SQL repository layer: `apps/api/src/repository.ts`
+- Service helpers module: `apps/api/src/services/`
+- Auth and JWT handling: `apps/api/src/auth.ts`
+- Passwords, token hashing, and invite/reset token generation: `apps/api/src/security.ts`
+- S3/local storage abstraction: `apps/api/src/storage.ts`
+- OCR pipeline: `apps/api/src/ocr.ts`
+- Worker entrypoint: `apps/api/src/worker-main.ts`
+- Background ingestion worker: `apps/api/src/worker.ts`
+- Web app dashboard: `apps/web/app/dashboard-app.tsx`
+- Admin panel component: `apps/web/app/components/admin/`
+- Security panel component: `apps/web/app/components/security/`
+- Auth form components: `apps/web/app/components/auth/`
+- Shared UI components: `apps/web/app/components/shared/`
+- Deployment guide: `DEPLOYMENT.md`
+
+## Testing
+
+Run all tests:
+
+```bash
+npm test
+```
+
+The test suite includes:
+- **32 unit tests** covering security helpers and service utilities
+- Password hashing and verification
+- Token generation and validation
+- Input sanitization and validation
 
 ## Production notes
 
 - Uploaded files now land in quarantine first; the worker scans and promotes clean files before OCR/embedding jobs run.
 - Keep at least one worker replica online in every environment or uploaded files will remain in `pending_scan`.
 - SCIM now supports both users and groups, but not nested groups.
+- API endpoints support pagination with `limit` and `offset` parameters for scalability.
+- Embedding queries are limited to prevent memory issues (configurable, default 100).
+
+## License
+
+Proprietary - All rights reserved.
