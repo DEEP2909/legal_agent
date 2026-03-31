@@ -29,12 +29,11 @@ export interface AdminSnapshot {
 }
 
 export interface AdminPanelProps {
-  token: string;
   snapshot: AdminSnapshot;
   onRefresh: () => Promise<void>;
 }
 
-export function AdminPanel({ token, snapshot, onRefresh }: AdminPanelProps) {
+export function AdminPanel({ snapshot, onRefresh }: AdminPanelProps) {
   const [tenantForm, setTenantForm] = useState({
     name: snapshot.tenant?.name ?? "",
     region: snapshot.tenant?.region ?? "IN",
@@ -131,7 +130,7 @@ export function AdminPanel({ token, snapshot, onRefresh }: AdminPanelProps) {
               className="button"
               onClick={() =>
                 startTransition(async () => {
-                  await updateTenant(token, tenantForm);
+                  await updateTenant(tenantForm);
                   await onRefresh();
                   setMessage("Tenant settings updated.");
                 })
@@ -205,7 +204,7 @@ export function AdminPanel({ token, snapshot, onRefresh }: AdminPanelProps) {
                 className="button"
                 onClick={() =>
                   startTransition(async () => {
-                    await createAttorney(token, attorneyForm);
+                    await createAttorney(attorneyForm);
                     await onRefresh();
                     setMessage("Attorney created.");
                   })
@@ -271,7 +270,7 @@ export function AdminPanel({ token, snapshot, onRefresh }: AdminPanelProps) {
                 className="button"
                 onClick={() =>
                   startTransition(async () => {
-                    const result = await createInvitation(token, invitationForm);
+                    const result = await createInvitation(invitationForm);
                     setNewInvitationToken(result.rawToken ?? null);
                     await onRefresh();
                     setMessage("Invitation created.");
@@ -339,7 +338,7 @@ export function AdminPanel({ token, snapshot, onRefresh }: AdminPanelProps) {
               className="button"
               onClick={() =>
                 startTransition(async () => {
-                  const result = await createApiKey(token, apiKeyForm);
+                  const result = await createApiKey(apiKeyForm);
                   setNewKey(result.rawKey);
                   await onRefresh();
                   setMessage("API key created.");
@@ -387,7 +386,7 @@ export function AdminPanel({ token, snapshot, onRefresh }: AdminPanelProps) {
               className="button"
               onClick={() =>
                 startTransition(async () => {
-                  const result = await createScimToken(token, scimTokenForm);
+                  const result = await createScimToken(scimTokenForm);
                   setNewScimToken(result.rawToken);
                   await onRefresh();
                   setMessage("SCIM token created.");
@@ -478,7 +477,7 @@ export function AdminPanel({ token, snapshot, onRefresh }: AdminPanelProps) {
                 className="button"
                 onClick={() =>
                   startTransition(async () => {
-                    await upsertSsoProvider(token, ssoForm);
+                    await upsertSsoProvider(ssoForm);
                     await onRefresh();
                     setMessage("SSO provider saved.");
                   })

@@ -869,7 +869,10 @@ export async function registerRoutes(app: FastifyInstance) {
       }
     );
 
-    protectedApp.post("/api/documents/extract", async (request) => {
+    // AI endpoints have stricter rate limits to protect OpenAI budget
+    const aiRateLimitConfig = { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } };
+
+    protectedApp.post("/api/documents/extract", aiRateLimitConfig, async (request) => {
       const body = z
         .object({
           documentId: z.string().uuid(),
@@ -881,7 +884,7 @@ export async function registerRoutes(app: FastifyInstance) {
       return legalWorkflowService.extractClauses(request.authSession, body);
     });
 
-    protectedApp.post("/api/flags/assess", async (request) => {
+    protectedApp.post("/api/flags/assess", aiRateLimitConfig, async (request) => {
       const body = z
         .object({
           matterId: z.string().uuid(),
@@ -895,7 +898,7 @@ export async function registerRoutes(app: FastifyInstance) {
       return legalWorkflowService.assessRisk(request.authSession, body);
     });
 
-    protectedApp.post("/api/research/query", async (request) => {
+    protectedApp.post("/api/research/query", aiRateLimitConfig, async (request) => {
       const body = z.object({ question: z.string().min(5) }).parse(request.body);
       return legalWorkflowService.research(request.authSession, body.question);
     });
@@ -904,8 +907,8 @@ export async function registerRoutes(app: FastifyInstance) {
       const body = z
         .object({
           flagId: z.string().uuid(),
-          action: z.enum(["approved", "rejected", "resolved"]),
-          reviewerId: z.string().uuid()
+          action: z.enum(["approved", "rejected", "resolved"])
+          // reviewerId removed - always use session.attorneyId for security
         })
         .parse(request.body);
 

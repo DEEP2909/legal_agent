@@ -18,6 +18,7 @@ import { startAuthentication, startRegistration } from "@simplewebauthn/browser"
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   acceptInvitation,
+  ApiError,
   beginMfaPasskeyAuthentication,
   beginMfaEnrollment,
   beginPasswordlessPasskeyLogin,
@@ -42,6 +43,7 @@ import {
   getTenantAdmin,
   listPasskeys,
   login,
+  logout,
   resetPassword,
   startSamlLogout,
   updateTenant,
@@ -53,8 +55,6 @@ import { SecurityPanel } from "./components/security";
 import { MaskedSecret } from "./components/shared/masked-secret";
 import { ResearchPanel } from "./research-panel";
 import { UploadPanel } from "./upload-panel";
-
-const storageKey = "legal-agent-access-token";
 
 // Password validation helper
 function validatePassword(password: string): string[] {
@@ -79,7 +79,8 @@ function clearAuthQueryParams() {
 }
 
 export function DashboardApp() {
-  const [token, setToken] = useState<string | null>(null);
+  // Authentication is now tracked via httpOnly cookies - no token stored in JS
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null);
   const [adminSnapshot, setAdminSnapshot] = useState<AdminSnapshot | null>(null);
@@ -92,27 +93,45 @@ export function DashboardApp() {
   const [authView, setAuthView] = useState<AuthView>("login");
   const [resetToken, setResetToken] = useState("");
   const [inviteToken, setInviteToken] = useState("");
-  const [tenantIdForSso, setTenantIdForSso] = useState("tenant-demo");
+  const [tenantIdForSso, setTenantIdForSso] = useState(
+    process.env.NEXT_PUBLIC_DEFAULT_TENANT_ID ?? ""
+  );
   const [ssoProviders, setSsoProviders] = useState<SsoProviderSummary[]>([]);
   const [isPending, startTransition] = useTransition();
 
-  async function refreshAll(activeToken: string) {
+  // Refresh all user data - uses httpOnly cookie automatically
+  async function refreshAll() {
     const [me, dashboardData, mfaData, passkeyData] = await Promise.all([
-      getMe(activeToken),
-      getDashboard(activeToken),
-      getMfaStatus(activeToken),
-      listPasskeys(activeToken)
+      getMe(),
+      getDashboard(),
+      getMfaStatus(),
+      listPasskeys()
     ]);
     setSession(me);
     setDashboard(dashboardData);
     setMfaStatus(mfaData);
     setPasskeys(passkeyData);
+    setIsAuthenticated(true);
 
     if (me.isTenantAdmin) {
-      setAdminSnapshot(await getTenantAdmin(activeToken));
+      setAdminSnapshot(await getTenantAdmin());
     } else {
       setAdminSnapshot(null);
     }
+  }
+
+  // Clear all local state on logout
+  function clearSession() {
+    setIsAuthenticated(false);
+    setSession(null);
+    setDashboard(null);
+    setAdminSnapshot(null);
+    setMfaStatus(null);
+    setMfaSetup(null);
+    setMfaChallengeToken("");
+    setMfaAvailableMethods([]);
+    setPasskeys([]);
+    setAuthView("login");
   }
 
   useEffect(() => {
@@ -155,11 +174,10 @@ export function DashboardApp() {
     }
 
     if (authExchange) {
+      // SSO callback - exchange code and cookie will be set by server
       void exchangeAuthCode(authExchange)
-        .then(async (result) => {
-          window.localStorage.setItem(storageKey, result.accessToken);
-          setToken(result.accessToken);
-          await refreshAll(result.accessToken);
+        .then(async () => {
+          await refreshAll();
           clearAuthQueryParams();
         })
         .catch((exchangeError) => {
@@ -169,32 +187,28 @@ export function DashboardApp() {
       return;
     }
 
-    const storedToken = window.localStorage.getItem(storageKey);
-    if (!storedToken) {
-      return;
-    }
-
-    setToken(storedToken);
-    void refreshAll(storedToken).catch((loadError) => {
-      window.localStorage.removeItem(storageKey);
-      setToken(null);
-      setMfaStatus(null);
-      setMfaSetup(null);
-      setPasskeys([]);
+    // Try to load session from existing httpOnly cookie
+    void refreshAll().catch((loadError) => {
+      // 401 means no valid session - this is expected for unauthenticated users
+      if (loadError instanceof ApiError && loadError.status === 401) {
+        return; // Silently stay on login page
+      }
       setError(loadError instanceof Error ? loadError.message : "Session expired.");
     });
   }, []);
 
   useEffect(() => {
-    void getPublicSsoProviders(tenantIdForSso)
-      .then(setSsoProviders)
-      .catch((error) => {
-        console.error("Failed to fetch SSO providers:", error);
-        setSsoProviders([]);
-      });
+    if (tenantIdForSso) {
+      void getPublicSsoProviders(tenantIdForSso)
+        .then(setSsoProviders)
+        .catch((error) => {
+          console.error("Failed to fetch SSO providers:", error);
+          setSsoProviders([]);
+        });
+    }
   }, [tenantIdForSso]);
 
-  if (!token || !dashboard || !session) {
+  if (!isAuthenticated || !dashboard || !session) {
     return (
       <main className="page-shell">
         <section className="hero">
@@ -226,15 +240,14 @@ export function DashboardApp() {
                         optionsJSON:
                           options.options as unknown as Parameters<typeof startAuthentication>[0]["optionsJSON"]
                       });
-                      const result = await finishPasswordlessPasskeyLogin({
+                      await finishPasswordlessPasskeyLogin({
                         tenantId: tenantIdForSso,
                         email,
                         challengeId: options.challengeId,
                         response: assertion as unknown as Record<string, unknown>
                       });
-                      window.localStorage.setItem(storageKey, result.accessToken);
-                      setToken(result.accessToken);
-                      await refreshAll(result.accessToken);
+                      // Cookie is set by server - just refresh session
+                      await refreshAll();
                     } catch (passkeyError) {
                       setError(
                         passkeyError instanceof Error ? passkeyError.message : "Passkey sign-in failed."
@@ -253,9 +266,8 @@ export function DashboardApp() {
                         setAuthView("mfa");
                         return;
                       }
-                      window.localStorage.setItem(storageKey, result.accessToken);
-                      setToken(result.accessToken);
-                      await refreshAll(result.accessToken);
+                      // Cookie is set by server - just refresh session
+                      await refreshAll();
                     } catch (loginError) {
                       setError(loginError instanceof Error ? loginError.message : "Login failed.");
                     }
@@ -280,17 +292,16 @@ export function DashboardApp() {
                         optionsJSON:
                           options.options as unknown as Parameters<typeof startAuthentication>[0]["optionsJSON"]
                       });
-                      const result = await finishMfaPasskeyAuthentication({
+                      await finishMfaPasskeyAuthentication({
                         challengeToken: mfaChallengeToken,
                         challengeId: options.challengeId,
                         response: assertion as unknown as Record<string, unknown>
                       });
-                      window.localStorage.setItem(storageKey, result.accessToken);
-                      setToken(result.accessToken);
+                      // Cookie is set by server - just refresh session
                       setAuthView("login");
                       setMfaChallengeToken("");
                       setMfaAvailableMethods([]);
-                      await refreshAll(result.accessToken);
+                      await refreshAll();
                     } catch (passkeyError) {
                       setError(
                         passkeyError instanceof Error ? passkeyError.message : "Passkey verification failed."
@@ -302,17 +313,16 @@ export function DashboardApp() {
                   startTransition(async () => {
                     try {
                       setError(null);
-                      const result = await verifyMfaChallenge({
+                      await verifyMfaChallenge({
                         challengeToken: mfaChallengeToken,
                         token: tokenValue || undefined,
                         recoveryCode: recoveryCode || undefined
                       });
-                      window.localStorage.setItem(storageKey, result.accessToken);
-                      setToken(result.accessToken);
+                      // Cookie is set by server - just refresh session
                       setAuthView("login");
                       setMfaChallengeToken("");
                       setMfaAvailableMethods([]);
-                      await refreshAll(result.accessToken);
+                      await refreshAll();
                     } catch (mfaError) {
                       setError(mfaError instanceof Error ? mfaError.message : "MFA verification failed.");
                     }
@@ -377,14 +387,13 @@ export function DashboardApp() {
                   startTransition(async () => {
                     try {
                       setError(null);
-                      const result = await acceptInvitation({
+                      await acceptInvitation({
                         token: submittedToken,
                         password,
                         fullName
                       });
-                      window.localStorage.setItem(storageKey, result.accessToken);
-                      setToken(result.accessToken);
-                      await refreshAll(result.accessToken);
+                      // Cookie is set by server - just refresh session
+                      await refreshAll();
                     } catch (inviteError) {
                       setError(
                         inviteError instanceof Error ? inviteError.message : "Invitation acceptance failed."
@@ -458,36 +467,26 @@ export function DashboardApp() {
             <button
               className="button secondary"
               onClick={async () => {
-                const resetLocalSession = () => {
-                  window.localStorage.removeItem(storageKey);
-                  setToken(null);
-                  setSession(null);
-                  setDashboard(null);
-                  setAdminSnapshot(null);
-                  setMfaStatus(null);
-                  setMfaSetup(null);
-                  setMfaChallengeToken("");
-                  setMfaAvailableMethods([]);
-                  setPasskeys([]);
-                  setAuthView("login");
-                };
-
                 if (session.federationProtocol === "saml" && session.identityProvider) {
                   try {
-                    const result = await startSamlLogout(token, {
+                    const result = await startSamlLogout({
                       providerName: session.identityProvider,
                       redirectPath: "/"
                     });
-                    resetLocalSession();
+                    await logout();
+                    clearSession();
                     window.location.assign(result.logoutUrl);
                     return;
                   } catch {
-                    resetLocalSession();
+                    await logout().catch(() => {});
+                    clearSession();
                     return;
                   }
                 }
 
-                resetLocalSession();
+                // Regular logout - server clears the cookie
+                await logout().catch(() => {});
+                clearSession();
               }}
             >
               Sign Out
@@ -549,22 +548,20 @@ export function DashboardApp() {
 
           {session.isTenantAdmin && adminSnapshot ? (
             <AdminPanel
-              token={token}
               snapshot={adminSnapshot}
-              onRefresh={() => refreshAll(token)}
+              onRefresh={() => refreshAll()}
             />
           ) : null}
 
           {mfaStatus ? (
             <SecurityPanel
-              token={token}
               mfaStatus={mfaStatus}
               mfaSetup={mfaSetup}
               passkeys={passkeys}
               onRefresh={async () => {
-                setMfaStatus(await getMfaStatus(token));
-                setPasskeys(await listPasskeys(token));
-                await refreshAll(token);
+                setMfaStatus(await getMfaStatus());
+                setPasskeys(await listPasskeys());
+                await refreshAll();
               }}
               onSetupChange={setMfaSetup}
             />
@@ -598,8 +595,8 @@ export function DashboardApp() {
             </div>
           </div>
 
-          <UploadPanel matters={dashboard.matters} token={token} onUploaded={() => refreshAll(token)} />
-          <ResearchPanel token={token} />
+          <UploadPanel matters={dashboard.matters} onUploaded={() => refreshAll()} />
+          <ResearchPanel />
         </div>
       </section>
     </main>

@@ -6,11 +6,9 @@ import { uploadDocument } from "../lib/api";
 
 export function UploadPanel({
   matters,
-  token,
   onUploaded
 }: {
   matters: Matter[];
-  token: string;
   onUploaded: () => Promise<void> | void;
 }) {
   const [isPending, startTransition] = useTransition();
@@ -28,7 +26,7 @@ export function UploadPanel({
 
           startTransition(async () => {
             try {
-              const result = await uploadDocument(formData, token);
+              const result = await uploadDocument(formData);
               setMessage(`Queued ${result.sourceName} with status ${result.ingestionStatus}.`);
               form.reset();
               await onUploaded();

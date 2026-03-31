@@ -14,7 +14,6 @@ import {
 import { MaskedSecret } from "../shared/masked-secret";
 
 export interface SecurityPanelProps {
-  token: string;
   mfaStatus: MfaStatus;
   mfaSetup: MfaSetupResponse | null;
   passkeys: PasskeySummary[];
@@ -23,7 +22,6 @@ export interface SecurityPanelProps {
 }
 
 export function SecurityPanel({
-  token,
   mfaStatus,
   mfaSetup,
   passkeys,
@@ -55,7 +53,7 @@ export function SecurityPanel({
                 className="button"
                 onClick={() =>
                   startTransition(async () => {
-                    const setup = await beginMfaEnrollment(token);
+                    const setup = await beginMfaEnrollment();
                     onSetupChange(setup);
                     setMessage("Scan the OTP URI or copy the secret, then confirm with a current code.");
                   })
@@ -100,7 +98,7 @@ export function SecurityPanel({
                   className="button"
                   onClick={() =>
                     startTransition(async () => {
-                      await confirmMfaEnrollment(token, setupCode);
+                      await confirmMfaEnrollment(setupCode);
                       onSetupChange(null);
                       setSetupCode("");
                       setMessage("MFA enabled.");
@@ -137,7 +135,7 @@ export function SecurityPanel({
                   className="button secondary"
                   onClick={() =>
                     startTransition(async () => {
-                      await disableMfa(token, {
+                      await disableMfa({
                         token: disableCode || undefined,
                         recoveryCode: disableRecoveryCode || undefined
                       });
@@ -170,14 +168,14 @@ export function SecurityPanel({
                 className="button"
                 onClick={() =>
                   startTransition(async () => {
-                    const options = await beginPasskeyRegistration(token, {
+                    const options = await beginPasskeyRegistration({
                       label: passkeyLabel || undefined
                     });
                     const credential = await startRegistration({
                       optionsJSON:
                         options.options as unknown as Parameters<typeof startRegistration>[0]["optionsJSON"]
                     });
-                    await finishPasskeyRegistration(token, {
+                    await finishPasskeyRegistration({
                       challengeId: options.challengeId,
                       response: credential as unknown as Record<string, unknown>,
                       label: passkeyLabel || undefined
@@ -205,7 +203,7 @@ export function SecurityPanel({
                         className="button secondary"
                         onClick={() =>
                           startTransition(async () => {
-                            await deletePasskey(token, passkey.id);
+                            await deletePasskey(passkey.id);
                             setMessage("Passkey removed.");
                             await onRefresh();
                           })

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { runResearch } from "../lib/api";
 
-export function ResearchPanel({ token }: { token: string }) {
+export function ResearchPanel() {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState(
     "Ask a research question to generate a grounded answer using the current matter corpus."
@@ -27,7 +27,7 @@ export function ResearchPanel({ token }: { token: string }) {
           disabled={isPending || !question.trim()}
           onClick={() =>
             startTransition(async () => {
-              const response = await runResearch(question, token);
+              const response = await runResearch(question);
               setAnswer(response.answer);
               setCitations(
                 response.citations.map((citation) => ({

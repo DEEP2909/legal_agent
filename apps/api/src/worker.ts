@@ -18,16 +18,14 @@ const workerId = `worker-${randomUUID()}`;
 const JOB_TIMEOUT_MS = 10 * 60 * 1000;
 
 function getFinalStoragePath(storagePath: string) {
+  // Handle Unix-style paths
   if (storagePath.includes("/quarantine/")) {
     return storagePath.replace("/quarantine/", "/uploads/");
   }
 
+  // Handle Windows-style paths
   if (storagePath.includes("\\quarantine\\")) {
     return storagePath.replace("\\quarantine\\", "\\uploads\\");
-  }
-
-  if (storagePath.includes("/quarantine/".replace(/\//g, "\\"))) {
-    return storagePath.replace("/quarantine/".replace(/\//g, "\\"), "/uploads/".replace(/\//g, "\\"));
   }
 
   return storagePath;

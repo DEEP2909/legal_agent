@@ -1780,7 +1780,6 @@ export const legalWorkflowService = {
   async reviewFeedback(session: AuthSession, input: {
     flagId: string;
     action: "approved" | "rejected" | "resolved";
-    reviewerId: string;
   }) {
     // Validate flag belongs to tenant before any action
     const flag = await repository.getFlagById(input.flagId, session.tenantId);
@@ -1788,14 +1787,13 @@ export const legalWorkflowService = {
       throw new Error("Flag not found or access denied");
     }
 
+    let result;
     if (input.action === "resolved") {
-      return repository.resolveFlag(input.flagId, session.tenantId);
+      result = await repository.resolveFlag(input.flagId, session.tenantId);
+    } else {
+      // approved or rejected - actually persist the status
+      result = await repository.updateFlagStatus(input.flagId, session.tenantId, input.action);
     }
-
-    const response = {
-      id: createHash("sha256").update(JSON.stringify(input)).digest("hex"),
-      stored: true
-    };
 
     await repository.recordAuditEvent({
       id: randomUUID(),
@@ -1805,11 +1803,12 @@ export const legalWorkflowService = {
       objectType: "flag",
       objectId: input.flagId,
       metadata: {
-        action: input.action
+        action: input.action,
+        reviewerId: session.attorneyId  // Use session instead of untrusted input
       }
     });
 
-    return response;
+    return result ?? { id: input.flagId, stored: true };
   },
 
   async listMatterDocuments(session: AuthSession, matterId: string) {

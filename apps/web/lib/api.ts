@@ -17,14 +17,19 @@ import type {
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
 
-function withAuth(token: string, init?: RequestInit): RequestInit {
+// Custom error class that preserves HTTP status codes
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+// All authenticated requests use httpOnly cookies - no token in JS memory
+function withAuth(init?: RequestInit): RequestInit {
   return {
     ...init,
-    credentials: "include", // Include httpOnly cookies
-    headers: {
-      ...(init?.headers ?? {}),
-      Authorization: `Bearer ${token}`
-    }
+    credentials: "include" // httpOnly cookie sent automatically
   };
 }
 
@@ -38,7 +43,7 @@ function withCredentials(init?: RequestInit): RequestInit {
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error || "Request failed");
+    throw new ApiError(response.status, body?.error || "Request failed");
   }
 
   return response.json();
@@ -56,8 +61,8 @@ export async function login(email: string, password: string, tenantId?: string):
   return parseResponse<LoginResponse>(response);
 }
 
-export async function logout(token: string): Promise<{ ok: boolean }> {
-  const response = await fetch(`${apiBaseUrl}/auth/logout`, withAuth(token, {
+export async function logout(): Promise<{ ok: boolean }> {
+  const response = await fetch(`${apiBaseUrl}/auth/logout`, withAuth({
     method: "POST"
   }));
   return parseResponse<{ ok: boolean }>(response);
@@ -84,13 +89,13 @@ export async function finishPasswordlessPasskeyLogin(input: {
   challengeId: string;
   response: Record<string, unknown>;
 }): Promise<LoginSuccessResponse> {
-  const response = await fetch(`${apiBaseUrl}/auth/passkey/verify`, {
+  const response = await fetch(`${apiBaseUrl}/auth/passkey/verify`, withCredentials({
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify(input)
-  });
+  }));
 
   return parseResponse<LoginSuccessResponse>(response);
 }
@@ -100,13 +105,13 @@ export async function verifyMfaChallenge(input: {
   token?: string;
   recoveryCode?: string;
 }): Promise<LoginSuccessResponse> {
-  const response = await fetch(`${apiBaseUrl}/auth/mfa/verify`, {
+  const response = await fetch(`${apiBaseUrl}/auth/mfa/verify`, withCredentials({
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify(input)
-  });
+  }));
 
   return parseResponse<LoginSuccessResponse>(response);
 }
@@ -131,41 +136,41 @@ export async function finishMfaPasskeyAuthentication(input: {
   challengeId: string;
   response: Record<string, unknown>;
 }): Promise<LoginSuccessResponse> {
-  const response = await fetch(`${apiBaseUrl}/auth/mfa/webauthn/verify`, {
+  const response = await fetch(`${apiBaseUrl}/auth/mfa/webauthn/verify`, withCredentials({
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify(input)
-  });
+  }));
 
   return parseResponse<LoginSuccessResponse>(response);
 }
 
 export async function exchangeAuthCode(code: string): Promise<LoginSuccessResponse> {
-  const response = await fetch(`${apiBaseUrl}/auth/exchange`, {
+  const response = await fetch(`${apiBaseUrl}/auth/exchange`, withCredentials({
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({ code })
-  });
+  }));
 
   return parseResponse<LoginSuccessResponse>(response);
 }
 
-export async function getMe(token: string): Promise<AuthSession> {
-  const response = await fetch(`${apiBaseUrl}/auth/me`, withAuth(token, { cache: "no-store" }));
+// All authenticated API calls use httpOnly cookie - no token parameter needed
+export async function getMe(): Promise<AuthSession> {
+  const response = await fetch(`${apiBaseUrl}/auth/me`, withAuth({ cache: "no-store" }));
   return parseResponse<AuthSession>(response);
 }
 
 export async function startSamlLogout(
-  token: string,
   input?: { providerName?: string; redirectPath?: string }
 ): Promise<{ logoutUrl: string }> {
   const response = await fetch(
     `${apiBaseUrl}/auth/sso/saml/logout`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -177,15 +182,15 @@ export async function startSamlLogout(
   return parseResponse<{ logoutUrl: string }>(response);
 }
 
-export async function getDashboard(token: string): Promise<DashboardSnapshot> {
-  const response = await fetch(`${apiBaseUrl}/api/dashboard`, withAuth(token, { cache: "no-store" }));
+export async function getDashboard(): Promise<DashboardSnapshot> {
+  const response = await fetch(`${apiBaseUrl}/api/dashboard`, withAuth({ cache: "no-store" }));
   return parseResponse<DashboardSnapshot>(response);
 }
 
-export async function runResearch(question: string, token: string): Promise<ResearchResponse> {
+export async function runResearch(question: string): Promise<ResearchResponse> {
   const response = await fetch(
     `${apiBaseUrl}/api/research/query`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -197,10 +202,10 @@ export async function runResearch(question: string, token: string): Promise<Rese
   return parseResponse<ResearchResponse>(response);
 }
 
-export async function uploadDocument(formData: FormData, token: string) {
+export async function uploadDocument(formData: FormData) {
   const response = await fetch(
     `${apiBaseUrl}/api/documents/upload`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       body: formData
     })
@@ -209,7 +214,7 @@ export async function uploadDocument(formData: FormData, token: string) {
   return parseResponse<Record<string, unknown>>(response);
 }
 
-export async function getTenantAdmin(token: string): Promise<{
+export async function getTenantAdmin(): Promise<{
   tenant?: Tenant;
   attorneys: Attorney[];
   apiKeys: ApiKeySummary[];
@@ -217,7 +222,7 @@ export async function getTenantAdmin(token: string): Promise<{
   ssoProviders: SsoProviderSummary[];
   scimTokens: ScimTokenSummary[];
 }> {
-  const response = await fetch(`${apiBaseUrl}/api/admin/tenant`, withAuth(token, { cache: "no-store" }));
+  const response = await fetch(`${apiBaseUrl}/api/admin/tenant`, withAuth({ cache: "no-store" }));
   return parseResponse<{
     tenant?: Tenant;
     attorneys: Attorney[];
@@ -229,12 +234,11 @@ export async function getTenantAdmin(token: string): Promise<{
 }
 
 export async function updateTenant(
-  token: string,
   input: { name: string; region: string; plan: string }
 ): Promise<Tenant> {
   const response = await fetch(
     `${apiBaseUrl}/api/admin/tenant`,
-    withAuth(token, {
+    withAuth({
       method: "PATCH",
       headers: {
         "Content-Type": "application/json"
@@ -247,7 +251,6 @@ export async function updateTenant(
 }
 
 export async function createAttorney(
-  token: string,
   input: {
     email: string;
     fullName: string;
@@ -259,7 +262,7 @@ export async function createAttorney(
 ): Promise<Attorney> {
   const response = await fetch(
     `${apiBaseUrl}/api/admin/attorneys`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -272,7 +275,6 @@ export async function createAttorney(
 }
 
 export async function createApiKey(
-  token: string,
   input: {
     attorneyId: string;
     name: string;
@@ -281,7 +283,7 @@ export async function createApiKey(
 ): Promise<ApiKeySummary & { rawKey: string }> {
   const response = await fetch(
     `${apiBaseUrl}/api/admin/api-keys`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -294,12 +296,11 @@ export async function createApiKey(
 }
 
 export async function createScimToken(
-  token: string,
   input: { name: string }
 ): Promise<ScimTokenSummary & { rawToken: string }> {
   const response = await fetch(
     `${apiBaseUrl}/api/admin/scim/tokens`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -312,7 +313,6 @@ export async function createScimToken(
 }
 
 export async function createInvitation(
-  token: string,
   input: {
     email: string;
     fullName?: string;
@@ -323,7 +323,7 @@ export async function createInvitation(
 ): Promise<InvitationSummary & { rawToken?: string }> {
   const response = await fetch(
     `${apiBaseUrl}/api/admin/invitations`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -336,7 +336,6 @@ export async function createInvitation(
 }
 
 export async function upsertSsoProvider(
-  token: string,
   input: {
     providerType: SsoProviderSummary["providerType"];
     providerName: string;
@@ -359,7 +358,7 @@ export async function upsertSsoProvider(
 ): Promise<SsoProviderSummary> {
   const response = await fetch(
     `${apiBaseUrl}/api/admin/sso-providers`,
-    withAuth(token, {
+    withAuth({
       method: "PUT",
       headers: {
         "Content-Type": "application/json"
@@ -383,15 +382,15 @@ export async function forgotPassword(email: string): Promise<{ ok: boolean; rese
   return parseResponse<{ ok: boolean; resetToken?: string }>(response);
 }
 
-export async function getMfaStatus(token: string): Promise<MfaStatus> {
-  const response = await fetch(`${apiBaseUrl}/api/security/mfa`, withAuth(token, { cache: "no-store" }));
+export async function getMfaStatus(): Promise<MfaStatus> {
+  const response = await fetch(`${apiBaseUrl}/api/security/mfa`, withAuth({ cache: "no-store" }));
   return parseResponse<MfaStatus>(response);
 }
 
-export async function listPasskeys(token: string): Promise<PasskeySummary[]> {
+export async function listPasskeys(): Promise<PasskeySummary[]> {
   const response = await fetch(
     `${apiBaseUrl}/api/security/passkeys`,
-    withAuth(token, {
+    withAuth({
       cache: "no-store"
     })
   );
@@ -400,12 +399,11 @@ export async function listPasskeys(token: string): Promise<PasskeySummary[]> {
 }
 
 export async function beginPasskeyRegistration(
-  token: string,
   input?: { label?: string }
 ): Promise<{ challengeId: string; options: Record<string, unknown> }> {
   const response = await fetch(
     `${apiBaseUrl}/api/security/passkeys/register/options`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -418,12 +416,11 @@ export async function beginPasskeyRegistration(
 }
 
 export async function finishPasskeyRegistration(
-  token: string,
   input: { challengeId: string; response: Record<string, unknown>; label?: string }
 ): Promise<PasskeySummary[]> {
   const response = await fetch(
     `${apiBaseUrl}/api/security/passkeys/register/verify`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -435,10 +432,10 @@ export async function finishPasskeyRegistration(
   return parseResponse<PasskeySummary[]>(response);
 }
 
-export async function deletePasskey(token: string, passkeyId: string): Promise<{ ok: boolean }> {
+export async function deletePasskey(passkeyId: string): Promise<{ ok: boolean }> {
   const response = await fetch(
     `${apiBaseUrl}/api/security/passkeys/${encodeURIComponent(passkeyId)}`,
-    withAuth(token, {
+    withAuth({
       method: "DELETE"
     })
   );
@@ -446,10 +443,10 @@ export async function deletePasskey(token: string, passkeyId: string): Promise<{
   return parseResponse<{ ok: boolean }>(response);
 }
 
-export async function beginMfaEnrollment(token: string): Promise<MfaSetupResponse> {
+export async function beginMfaEnrollment(): Promise<MfaSetupResponse> {
   const response = await fetch(
     `${apiBaseUrl}/api/security/mfa/setup`,
-    withAuth(token, {
+    withAuth({
       method: "POST"
     })
   );
@@ -457,10 +454,10 @@ export async function beginMfaEnrollment(token: string): Promise<MfaSetupRespons
   return parseResponse<MfaSetupResponse>(response);
 }
 
-export async function confirmMfaEnrollment(token: string, mfaToken: string): Promise<MfaStatus> {
+export async function confirmMfaEnrollment(mfaToken: string): Promise<MfaStatus> {
   const response = await fetch(
     `${apiBaseUrl}/api/security/mfa/confirm`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -473,12 +470,11 @@ export async function confirmMfaEnrollment(token: string, mfaToken: string): Pro
 }
 
 export async function disableMfa(
-  token: string,
   input: { token?: string; recoveryCode?: string }
 ): Promise<{ ok: boolean }> {
   const response = await fetch(
     `${apiBaseUrl}/api/security/mfa/disable`,
-    withAuth(token, {
+    withAuth({
       method: "POST",
       headers: {
         "Content-Type": "application/json"

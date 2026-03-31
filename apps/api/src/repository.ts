@@ -1703,6 +1703,14 @@ export const repository = {
     return result.rows[0] ? mapFlag(result.rows[0]) : undefined;
   },
 
+  async updateFlagStatus(flagId: string, tenantId: string, status: "approved" | "rejected") {
+    const result = await pool.query(
+      "update flags set status = $3, resolved_at = now() where id = $1 and tenant_id = $2 returning *",
+      [flagId, tenantId, status]
+    );
+    return result.rows[0] ? mapFlag(result.rows[0]) : undefined;
+  },
+
   async getMatterDocuments(matterId: string, tenantId: string) {
     const result = await pool.query(
       "select * from documents where matter_id = $1 and tenant_id = $2 order by created_at desc limit 500",
