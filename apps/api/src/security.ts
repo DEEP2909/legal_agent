@@ -2,6 +2,7 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  createHmac,
   randomBytes,
   scrypt as scryptCallback,
   timingSafeEqual
@@ -12,8 +13,11 @@ import { config } from "./config.js";
 const scrypt = promisify(scryptCallback);
 const secretPrefix = "enc:v1";
 
+// Use HMAC with app key for API key hashing (adds secret key as salt)
 export function hashApiKey(apiKey: string) {
-  return createHash("sha256").update(apiKey).digest("hex");
+  return createHmac("sha256", config.appEncryptionKey)
+    .update(apiKey)
+    .digest("hex");
 }
 
 export function getApiKeyPrefix(apiKey: string) {

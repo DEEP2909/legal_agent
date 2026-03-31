@@ -16,13 +16,5 @@
     "format:check": "npx @biomejs/biome format .",
     "test": "npm run test -w @legal-agent/api"
   },
-  "dependencies": {
-    "@fastify/formbody": "^8.0.2",
-    "@node-saml/node-saml": "^5.1.0",
-    "nodemailer": "^8.0.4",
-    "otpauth": "^9.5.0"
-  },
-  "devDependencies": {
-    "@types/nodemailer": "^7.0.11"
-  }
+  "devDependencies": {}
 }

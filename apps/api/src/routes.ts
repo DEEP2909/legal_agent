@@ -53,6 +53,16 @@ const authRateLimit = {
   }
 };
 
+// Rate limiting for admin token/key creation endpoints
+const adminTokenRateLimit = {
+  config: {
+    rateLimit: {
+      max: 10,
+      timeWindow: "1 minute"
+    }
+  }
+};
+
 // Very strict rate limiting for platform admin
 const platformAdminRateLimit = {
   config: {
@@ -632,7 +642,7 @@ export async function registerRoutes(app: FastifyInstance) {
     );
 
     protectedApp.get("/api/matters/:matterId/documents", async (request) => {
-      const params = z.object({ matterId: z.string() }).parse(request.params);
+      const params = z.object({ matterId: z.string().uuid() }).parse(request.params);
       return legalWorkflowService.listMatterDocuments(request.authSession, params.matterId);
     });
 
@@ -656,10 +666,10 @@ export async function registerRoutes(app: FastifyInstance) {
       const body = z
         .object({
           email: z.string().email(),
-          fullName: z.string().min(2),
+          fullName: z.string().min(2).max(200),
           role: z.enum(["partner", "associate", "paralegal", "admin"]),
-          practiceArea: z.string().min(2),
-          password: z.string().min(10),
+          practiceArea: z.string().min(2).max(100),
+          password: z.string().min(12).max(128),
           isTenantAdmin: z.boolean().default(false)
         })
         .parse(request.body);
@@ -667,22 +677,30 @@ export async function registerRoutes(app: FastifyInstance) {
       return legalWorkflowService.createAttorney(request.authSession, body);
     });
 
-    protectedApp.post("/api/admin/api-keys", { preHandler: requireTenantAdmin }, async (request) => {
-      const body = z
-        .object({
-          attorneyId: z.string(),
-          name: z.string().min(2),
-          role: z.enum(["partner", "associate", "paralegal", "admin"])
-        })
-        .parse(request.body);
+    protectedApp.post(
+      "/api/admin/api-keys",
+      { preHandler: requireTenantAdmin, ...adminTokenRateLimit },
+      async (request) => {
+        const body = z
+          .object({
+            attorneyId: z.string().uuid(),
+            name: z.string().min(2).max(100),
+            role: z.enum(["partner", "associate", "paralegal", "admin"])
+          })
+          .parse(request.body);
 
-      return legalWorkflowService.createApiKey(request.authSession, body);
-    });
+        return legalWorkflowService.createApiKey(request.authSession, body);
+      }
+    );
 
-    protectedApp.post("/api/admin/scim/tokens", { preHandler: requireTenantAdmin }, async (request) => {
-      const body = z.object({ name: z.string().min(2) }).parse(request.body);
-      return legalWorkflowService.createScimToken(request.authSession, body);
-    });
+    protectedApp.post(
+      "/api/admin/scim/tokens",
+      { preHandler: requireTenantAdmin, ...adminTokenRateLimit },
+      async (request) => {
+        const body = z.object({ name: z.string().min(2).max(100) }).parse(request.body);
+        return legalWorkflowService.createScimToken(request.authSession, body);
+      }
+    );
 
     protectedApp.post(
       "/api/admin/invitations",
@@ -781,7 +799,7 @@ export async function registerRoutes(app: FastifyInstance) {
       async (request, reply) => {
         const body = z
           .object({
-            matterId: z.string(),
+            matterId: z.string().uuid(),
             sourceName: z.string(),
             mimeType: z.string(),
             docType: z.string(),
@@ -846,7 +864,7 @@ export async function registerRoutes(app: FastifyInstance) {
       "/api/documents/:documentId/rescan",
       { preHandler: requireRole(["partner", "admin"]) },
       async (request) => {
-        const params = z.object({ documentId: z.string() }).parse(request.params);
+        const params = z.object({ documentId: z.string().uuid() }).parse(request.params);
         return legalWorkflowService.queueDocumentRescan(request.authSession, params.documentId);
       }
     );
@@ -854,7 +872,7 @@ export async function registerRoutes(app: FastifyInstance) {
     protectedApp.post("/api/documents/extract", async (request) => {
       const body = z
         .object({
-          documentId: z.string(),
+          documentId: z.string().uuid(),
           documentType: z.string(),
           normalizedText: z.string().optional()
         })
@@ -866,9 +884,9 @@ export async function registerRoutes(app: FastifyInstance) {
     protectedApp.post("/api/flags/assess", async (request) => {
       const body = z
         .object({
-          matterId: z.string(),
-          documentId: z.string(),
-          clauseId: z.string().optional(),
+          matterId: z.string().uuid(),
+          documentId: z.string().uuid(),
+          clauseId: z.string().uuid().optional(),
           clauseText: z.string(),
           playbook: z.array(z.string()).default([])
         })
@@ -885,9 +903,9 @@ export async function registerRoutes(app: FastifyInstance) {
     protectedApp.post("/api/review/feedback", async (request) => {
       const body = z
         .object({
-          flagId: z.string(),
+          flagId: z.string().uuid(),
           action: z.enum(["approved", "rejected", "resolved"]),
-          reviewerId: z.string()
+          reviewerId: z.string().uuid()
         })
         .parse(request.body);
 

@@ -1687,7 +1687,7 @@ export const legalWorkflowService = {
       reviewerStatus: "pending"
     }));
 
-    await repository.replaceClauses(input.documentId, clauses);
+    await repository.replaceClauses(input.documentId, clauses, session.tenantId);
     await repository.recordAuditEvent({
       id: randomUUID(),
       tenantId: session.tenantId,
@@ -1699,7 +1699,7 @@ export const legalWorkflowService = {
         clauseCount: clauses.length
       }
     });
-    return clauses.filter(() => session.tenantId.length > 0);
+    return clauses;
   },
 
   async assessRisk(
@@ -1899,6 +1899,12 @@ export const legalWorkflowService = {
     session: AuthSession,
     input: { attorneyId: string; name: string; role: AuthSession["role"] }
   ): Promise<ApiKeySummary & { rawKey: string }> {
+    // Verify attorney belongs to same tenant
+    const attorney = await repository.getAttorneyByIdForTenant(input.attorneyId, session.tenantId);
+    if (!attorney) {
+      throw new Error("Attorney not found in tenant.");
+    }
+
     const rawKey = generateRawApiKey();
     const apiKey = await repository.createApiKey({
       id: randomUUID(),
@@ -1919,7 +1925,8 @@ export const legalWorkflowService = {
       objectId: apiKey.id,
       metadata: {
         name: apiKey.name,
-        role: apiKey.role
+        role: apiKey.role,
+        forAttorneyId: input.attorneyId
       }
     });
 

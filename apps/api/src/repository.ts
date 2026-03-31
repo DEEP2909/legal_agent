@@ -1615,22 +1615,26 @@ export const repository = {
     return result.rows[0] ? mapMatter(result.rows[0]) : undefined;
   },
 
-  async replaceClauses(documentId: string, clauses: ClauseRecord[]) {
-    const document = await this.getDocument(documentId);
-    if (!document?.tenantId) {
-      return;
+  async replaceClauses(documentId: string, clauses: ClauseRecord[], tenantId: string) {
+    // Verify document belongs to tenant before modifying clauses
+    const document = await this.getDocumentForTenant(documentId, tenantId);
+    if (!document) {
+      throw new Error("Document not found for tenant.");
     }
 
-    await pool.query("delete from clauses where document_id = $1", [documentId]);
+    await pool.query("delete from clauses where document_id = $1 and tenant_id = $2", [documentId, tenantId]);
 
-    for (const clause of clauses) {
-      await pool.query(
-        `insert into clauses
-         (id, tenant_id, document_id, clause_type, heading, text_excerpt, page_from, page_to, risk_level, confidence, reviewer_status)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-        [
+    // Batch insert for better performance
+    if (clauses.length > 0) {
+      const values: unknown[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+
+      for (const clause of clauses) {
+        placeholders.push(`($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3}, $${paramIndex + 4}, $${paramIndex + 5}, $${paramIndex + 6}, $${paramIndex + 7}, $${paramIndex + 8}, $${paramIndex + 9}, $${paramIndex + 10})`);
+        values.push(
           clause.id,
-          document.tenantId,
+          tenantId,
           documentId,
           clause.clauseType,
           clause.heading,
@@ -1640,15 +1644,24 @@ export const repository = {
           clause.riskLevel,
           clause.confidence,
           clause.reviewerStatus
-        ]
+        );
+        paramIndex += 11;
+      }
+
+      await pool.query(
+        `insert into clauses
+         (id, tenant_id, document_id, clause_type, heading, text_excerpt, page_from, page_to, risk_level, confidence, reviewer_status)
+         values ${placeholders.join(", ")}`,
+        values
       );
     }
   },
 
-  async getClausesByDocument(documentId: string) {
-    const result = await pool.query("select * from clauses where document_id = $1 order by created_at desc", [
-      documentId
-    ]);
+  async getClausesByDocument(documentId: string, tenantId: string, limit = 1000) {
+    const result = await pool.query(
+      "select * from clauses where document_id = $1 and tenant_id = $2 order by created_at desc limit $3", 
+      [documentId, tenantId, limit]
+    );
     return result.rows.map(mapClause);
   },
 
