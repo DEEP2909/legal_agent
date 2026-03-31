@@ -16,6 +16,30 @@ import type {
 } from "@legal-agent/shared";
 import { pool } from "./database.js";
 
+// Explicit column lists for each table (Issue M3 - avoid SELECT *)
+const COLS = {
+  tenants: "id, name, region, plan, created_at",
+  attorneys: "id, tenant_id, email, full_name, role, practice_area, password_hash, can_login, is_tenant_admin, mfa_enabled, mfa_secret, mfa_recovery_codes, mfa_enabled_at, last_login_at, is_active, failed_login_attempts, locked_until, created_at",
+  attorneysPublic: "id, tenant_id, email, full_name, role, practice_area, can_login, is_tenant_admin, is_active, created_at",
+  matters: "id, tenant_id, matter_code, title, client_name, matter_type, status, jurisdiction, responsible_attorney_id, opened_at, closed_at",
+  documents: "id, tenant_id, matter_id, source_name, file_uri, sha256, mime_type, page_count, language, doc_type, ingestion_status, security_status, security_reason, scan_completed_at, normalized_text, ocr_confidence, dedup_group_id, privilege_score, relevance_score, created_by, created_at",
+  clauses: "id, tenant_id, document_id, clause_type, heading, text_excerpt, page_from, page_to, source_span, extracted_entities, risk_level, confidence, reviewer_status, created_at",
+  flags: "id, tenant_id, matter_id, document_id, clause_id, flag_type, severity, reason, model_name, confidence, status, assigned_to, created_at, resolved_at",
+  apiKeys: "id, tenant_id, attorney_id, name, key_prefix, key_hash, role, status, last_used_at, created_at",
+  invitations: "id, tenant_id, email, full_name, role, practice_area, is_tenant_admin, token_hash, status, expires_at, accepted_at, created_by, created_at",
+  scimTokens: "id, tenant_id, name, token_prefix, token_hash, status, last_used_at, created_at",
+  ssoProviders: "id, tenant_id, provider_name, provider_type, display_name, client_id, client_secret, issuer_url, jwks_uri, authorization_endpoint, token_endpoint, userinfo_endpoint, entity_id, sso_url, slo_url, x509_cert, name_id_format, scopes, enabled, created_at, updated_at",
+  webauthnCredentials: "id, attorney_id, tenant_id, credential_id, public_key, counter, device_type, backed_up, transports, label, created_at, last_used_at",
+  webauthnChallenges: "id, attorney_id, tenant_id, challenge, operation, created_at, expires_at",
+  mfaEnrollments: "id, attorney_id, tenant_id, secret_base32, recovery_codes, created_at, expires_at",
+  mfaChallenges: "id, attorney_id, tenant_id, challenge_token, status, created_at, expires_at",
+  passwordResetTokens: "id, tenant_id, attorney_id, token_hash, status, expires_at, used_at, created_at",
+  documentChunks: "id, tenant_id, document_id, page_from, page_to, chunk_index, text_content, citation_json, embedding, created_at",
+  scimGroups: "id, tenant_id, display_name, external_id, created_at, updated_at",
+  scimGroupMembers: "group_id, attorney_id, created_at",
+  samlLoginSessions: "id, tenant_id, provider_id, relay_state, request_id, created_at, expires_at"
+} as const;
+
 function mapAttorney(row: Record<string, unknown>): Attorney {
   return {
     id: String(row.id),
@@ -220,7 +244,7 @@ export const repository = {
 
   async getAttorneyByEmailForTenant(tenantId: string, email: string) {
     const result = await pool.query(
-      `select * from attorneys
+      `select ${COLS.attorneys} from attorneys
        where tenant_id = $1 and lower(email) = lower($2)
        limit 1`,
       [tenantId, email]
@@ -233,10 +257,10 @@ export const repository = {
     // For password reset, we allow lookup by email with optional tenant scope
     // This is needed for forgot-password flows where tenant may not be known
     const query = tenantId
-      ? `select * from attorneys
+      ? `select ${COLS.attorneys} from attorneys
          where lower(email) = lower($1) and tenant_id = $2 and can_login = true and is_active = true
          limit 1`
-      : `select * from attorneys
+      : `select ${COLS.attorneys} from attorneys
          where lower(email) = lower($1) and can_login = true and is_active = true
          limit 1`;
     const params = tenantId ? [email, tenantId] : [email];
@@ -246,7 +270,7 @@ export const repository = {
 
   async getAttorneyForPasswordless(tenantId: string, email: string) {
     const result = await pool.query(
-      `select *
+      `select ${COLS.attorneys}
        from attorneys
        where tenant_id = $1
          and lower(email) = lower($2)
@@ -261,7 +285,7 @@ export const repository = {
 
   async getAttorneyByIdForTenant(attorneyId: string, tenantId: string) {
     const result = await pool.query(
-      `select * from attorneys
+      `select ${COLS.attorneys} from attorneys
        where id = $1 and tenant_id = $2
        limit 1`,
       [attorneyId, tenantId]
@@ -361,12 +385,12 @@ export const repository = {
 
   async getDashboard(tenantId: string): Promise<DashboardSnapshot> {
     const [tenant, attorneys, matters, documents, clauses, flags] = await Promise.all([
-      pool.query("select * from tenants where id = $1 limit 1", [tenantId]),
-      pool.query("select * from attorneys where tenant_id = $1 order by created_at desc limit 100", [tenantId]),
-      pool.query("select * from matters where tenant_id = $1 order by opened_at desc limit 100", [tenantId]),
-      pool.query("select * from documents where tenant_id = $1 order by created_at desc limit 200", [tenantId]),
-      pool.query("select * from clauses where tenant_id = $1 order by created_at desc limit 500", [tenantId]),
-      pool.query("select * from flags where tenant_id = $1 order by created_at desc limit 200", [tenantId])
+      pool.query(`select ${COLS.tenants} from tenants where id = $1 limit 1`, [tenantId]),
+      pool.query(`select ${COLS.attorneysPublic} from attorneys where tenant_id = $1 order by created_at desc limit 100`, [tenantId]),
+      pool.query(`select ${COLS.matters} from matters where tenant_id = $1 order by opened_at desc limit 100`, [tenantId]),
+      pool.query(`select ${COLS.documents} from documents where tenant_id = $1 order by created_at desc limit 200`, [tenantId]),
+      pool.query(`select ${COLS.clauses} from clauses where tenant_id = $1 order by created_at desc limit 500`, [tenantId]),
+      pool.query(`select ${COLS.flags} from flags where tenant_id = $1 order by created_at desc limit 200`, [tenantId])
     ]);
 
     return {
@@ -383,7 +407,7 @@ export const repository = {
     const limit = Math.min(options?.limit ?? 200, 200);
     const offset = options?.offset ?? 0;
     const result = await pool.query(
-      "select * from tenants order by created_at desc limit $1 offset $2",
+      `select ${COLS.tenants} from tenants order by created_at desc limit $1 offset $2`,
       [limit, offset]
     );
     return result.rows.map(mapTenant);
@@ -398,7 +422,7 @@ export const repository = {
     const result = await pool.query(
       `insert into tenants (id, name, region, plan)
        values ($1, $2, $3, $4)
-       returning *`,
+       returning ${COLS.tenants}`,
       [input.id, input.name, input.region, input.plan]
     );
 
@@ -410,7 +434,7 @@ export const repository = {
       `update tenants
        set name = $2, region = $3, plan = $4
        where id = $1
-       returning *`,
+       returning ${COLS.tenants}`,
       [input.tenantId, input.name, input.region, input.plan]
     );
 
@@ -421,7 +445,7 @@ export const repository = {
     const limit = Math.min(options?.limit ?? 200, 200);
     const offset = options?.offset ?? 0;
     const result = await pool.query(
-      "select * from attorneys where tenant_id = $1 order by created_at desc limit $2 offset $3",
+      `select ${COLS.attorneysPublic} from attorneys where tenant_id = $1 order by created_at desc limit $2 offset $3`,
       [tenantId, limit, offset]
     );
     return result.rows.map(mapAttorney);
@@ -453,7 +477,7 @@ export const repository = {
     values.push(input.count);
     values.push(offset);
     const result = await pool.query(
-      `select * from attorneys
+      `select ${COLS.attorneys} from attorneys
        ${whereClause}
        order by created_at asc
        limit $${values.length - 1} offset $${values.length}`,
@@ -482,7 +506,7 @@ export const repository = {
       `insert into attorneys
        (id, tenant_id, email, full_name, role, practice_area, password_hash, can_login, is_tenant_admin, is_active)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       returning *`,
+       returning ${COLS.attorneysPublic}`,
       [
         input.id,
         input.tenantId,
@@ -521,7 +545,7 @@ export const repository = {
            can_login = $8,
            is_active = $9
        where id = $1 and tenant_id = $2
-       returning *`,
+       returning ${COLS.attorneysPublic}`,
       [
         input.attorneyId,
         input.tenantId,
@@ -542,7 +566,7 @@ export const repository = {
     const limit = Math.min(options?.limit ?? 200, 200);
     const offset = options?.offset ?? 0;
     const result = await pool.query(
-      "select * from api_keys where tenant_id = $1 order by created_at desc limit $2 offset $3",
+      `select ${COLS.apiKeys} from api_keys where tenant_id = $1 order by created_at desc limit $2 offset $3`,
       [tenantId, limit, offset]
     );
     return result.rows.map(mapApiKey);
@@ -569,7 +593,7 @@ export const repository = {
       `insert into api_keys
        (id, tenant_id, attorney_id, name, key_prefix, key_hash, role, status)
        values ($1, $2, $3, $4, $5, $6, $7, 'active')
-       returning *`,
+       returning ${COLS.apiKeys}`,
       [
         input.id,
         input.tenantId,
@@ -586,7 +610,7 @@ export const repository = {
 
   async listScimTokens(tenantId: string) {
     const result = await pool.query(
-      "select * from scim_tokens where tenant_id = $1 order by created_at desc",
+      `select ${COLS.scimTokens} from scim_tokens where tenant_id = $1 order by created_at desc`,
       [tenantId]
     );
     return result.rows.map(mapScimToken);
@@ -604,7 +628,7 @@ export const repository = {
       `insert into scim_tokens
        (id, tenant_id, created_by, name, token_prefix, token_hash, status)
        values ($1, $2, $3, $4, $5, $6, 'active')
-       returning *`,
+       returning ${COLS.scimTokens}`,
       [
         input.id,
         input.tenantId,
@@ -644,7 +668,7 @@ export const repository = {
     const limit = Math.min(options?.limit ?? 200, 200);
     const offset = options?.offset ?? 0;
     const result = await pool.query(
-      "select * from invitations where tenant_id = $1 order by created_at desc limit $2 offset $3",
+      `select ${COLS.invitations} from invitations where tenant_id = $1 order by created_at desc limit $2 offset $3`,
       [tenantId, limit, offset]
     );
     return result.rows.map(mapInvitation);
@@ -673,7 +697,7 @@ export const repository = {
       `insert into invitations
        (id, tenant_id, email, full_name, role, practice_area, is_tenant_admin, token_hash, expires_at, created_by)
        values ($1, $2, $3, $4, $5, $6, $7, $8, now() + interval '7 days', $9)
-       returning *`,
+       returning ${COLS.invitations}`,
       [
         input.id,
         input.tenantId,
@@ -692,7 +716,7 @@ export const repository = {
 
   async getInvitationByTokenHash(tokenHash: string) {
     const result = await pool.query(
-      `select * from invitations
+      `select ${COLS.invitations} from invitations
        where token_hash = $1 and status = 'pending' and expires_at > now()
        limit 1`,
       [tokenHash]
@@ -703,7 +727,7 @@ export const repository = {
 
   async getPendingInvitationByEmail(tenantId: string, email: string) {
     const result = await pool.query(
-      `select * from invitations
+      `select ${COLS.invitations} from invitations
        where tenant_id = $1
          and lower(email) = lower($2)
          and status = 'pending'
@@ -720,7 +744,7 @@ export const repository = {
       `update invitations
        set status = 'accepted', accepted_at = now()
        where id = $1
-       returning *`,
+       returning ${COLS.invitations}`,
       [invitationId]
     );
 
@@ -743,7 +767,7 @@ export const repository = {
 
   async getPasswordResetToken(tokenHash: string) {
     const result = await pool.query(
-      `select * from password_reset_tokens
+      `select ${COLS.passwordResetTokens} from password_reset_tokens
        where token_hash = $1 and status = 'pending' and expires_at > now()
        limit 1`,
       [tokenHash]
@@ -771,7 +795,7 @@ export const repository = {
 
   async listSsoProviders(tenantId: string) {
     const result = await pool.query(
-      "select * from sso_providers where tenant_id = $1 order by created_at desc",
+      `select ${COLS.ssoProviders} from sso_providers where tenant_id = $1 order by created_at desc`,
       [tenantId]
     );
     return result.rows.map(mapSsoProvider);
@@ -779,7 +803,7 @@ export const repository = {
 
   async listEnabledSsoProviders(tenantId: string) {
     const result = await pool.query(
-      "select * from sso_providers where tenant_id = $1 and enabled = true order by created_at desc",
+      `select ${COLS.ssoProviders} from sso_providers where tenant_id = $1 and enabled = true order by created_at desc`,
       [tenantId]
     );
     return result.rows.map(mapSsoProvider);
@@ -787,7 +811,7 @@ export const repository = {
 
   async getSsoProviderForTenant(tenantId: string, providerName: string) {
     const result = await pool.query(
-      "select * from sso_providers where tenant_id = $1 and provider_name = $2 and enabled = true limit 1",
+      `select ${COLS.ssoProviders} from sso_providers where tenant_id = $1 and provider_name = $2 and enabled = true limit 1`,
       [tenantId, providerName]
     );
     return result.rows[0] ?? null;
@@ -795,14 +819,14 @@ export const repository = {
 
   async getSsoProviderByTenantAndName(tenantId: string, providerName: string) {
     const result = await pool.query(
-      "select * from sso_providers where tenant_id = $1 and provider_name = $2 limit 1",
+      `select ${COLS.ssoProviders} from sso_providers where tenant_id = $1 and provider_name = $2 limit 1`,
       [tenantId, providerName]
     );
     return result.rows[0] ?? null;
   },
 
   async getSsoProviderById(providerId: string) {
-    const result = await pool.query("select * from sso_providers where id = $1 limit 1", [providerId]);
+    const result = await pool.query(`select ${COLS.ssoProviders} from sso_providers where id = $1 limit 1`, [providerId]);
     return result.rows[0] ?? null;
   },
 
@@ -855,7 +879,7 @@ export const repository = {
          scopes = excluded.scopes,
          enabled = excluded.enabled,
          updated_at = now()
-      returning *`,
+      returning ${COLS.ssoProviders}`,
       [
         input.id ?? input.providerName,
         input.tenantId,
@@ -912,7 +936,7 @@ export const repository = {
       `update sso_auth_states
        set consumed_at = now()
        where state_hash = $1 and consumed_at is null and expires_at > now()
-       returning *`,
+       returning id, tenant_id, provider_id, state_hash, nonce, code_verifier, redirect_path, created_at, expires_at`,
       [stateHash]
     );
 
@@ -949,7 +973,7 @@ export const repository = {
       `update auth_exchanges
        set consumed_at = now()
        where code_hash = $1 and consumed_at is null and expires_at > now()
-       returning *`,
+       returning id, tenant_id, attorney_id, code_hash, auth_method, created_at, expires_at`,
       [codeHash]
     );
 
@@ -973,7 +997,7 @@ export const repository = {
          recovery_code_hashes = excluded.recovery_code_hashes,
          expires_at = now() + interval '30 minutes',
          created_at = now()
-       returning *`,
+       returning ${COLS.mfaEnrollments}`,
       [input.id, input.tenantId, input.attorneyId, input.secret, JSON.stringify(input.recoveryCodeHashes)]
     );
 
@@ -982,7 +1006,7 @@ export const repository = {
 
   async getMfaEnrollment(attorneyId: string) {
     const result = await pool.query(
-      `select * from mfa_enrollments
+      `select ${COLS.mfaEnrollments} from mfa_enrollments
        where attorney_id = $1 and expires_at > now()
        limit 1`,
       [attorneyId]
@@ -1049,7 +1073,7 @@ export const repository = {
 
   async getMfaChallenge(challengeHash: string) {
     const result = await pool.query(
-      `select * from mfa_challenges
+      `select id, attorney_id, tenant_id, challenge_hash, auth_method, created_at, expires_at, consumed_at from mfa_challenges
        where challenge_hash = $1 and consumed_at is null and expires_at > now()
        limit 1`,
       [challengeHash]
@@ -1069,7 +1093,7 @@ export const repository = {
 
   async listWebauthnCredentials(attorneyId: string) {
     const result = await pool.query(
-      `select * from webauthn_credentials
+      `select ${COLS.webauthnCredentials} from webauthn_credentials
        where attorney_id = $1
        order by created_at desc`,
       [attorneyId]
@@ -1080,7 +1104,7 @@ export const repository = {
 
   async getWebauthnCredentialByCredentialId(credentialId: string) {
     const result = await pool.query(
-      `select * from webauthn_credentials
+      `select ${COLS.webauthnCredentials} from webauthn_credentials
        where credential_id = $1
        limit 1`,
       [credentialId]
@@ -1105,7 +1129,7 @@ export const repository = {
       `insert into webauthn_credentials
        (id, tenant_id, attorney_id, credential_id, public_key, counter, device_type, backed_up, transports, label)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
-       returning *`,
+       returning ${COLS.webauthnCredentials}`,
       [
         input.id,
         input.tenantId,
@@ -1144,7 +1168,7 @@ export const repository = {
     const result = await pool.query(
       `delete from webauthn_credentials
        where attorney_id = $1 and id = $2
-       returning *`,
+       returning ${COLS.webauthnCredentials}`,
       [attorneyId, credentialRecordId]
     );
 
@@ -1164,7 +1188,7 @@ export const repository = {
       `insert into webauthn_challenges
        (id, tenant_id, attorney_id, challenge_value, challenge_type, linked_mfa_challenge_id, label, expires_at)
        values ($1, $2, $3, $4, $5, $6, $7, now() + interval '10 minutes')
-       returning *`,
+       returning ${COLS.webauthnChallenges}`,
       [
         input.id,
         input.tenantId,
@@ -1181,7 +1205,7 @@ export const repository = {
 
   async getWebauthnChallenge(challengeId: string) {
     const result = await pool.query(
-      `select * from webauthn_challenges
+      `select ${COLS.webauthnChallenges} from webauthn_challenges
        where id = $1 and consumed_at is null and expires_at > now()
        limit 1`,
       [challengeId]
@@ -1195,7 +1219,7 @@ export const repository = {
       `update webauthn_challenges
        set consumed_at = now()
        where id = $1 and consumed_at is null and expires_at > now()
-       returning *`,
+       returning ${COLS.webauthnChallenges}`,
       [challengeId]
     );
 
@@ -1222,7 +1246,7 @@ export const repository = {
       `update saml_relay_states
        set consumed_at = now()
        where relay_state_hash = $1 and consumed_at is null and expires_at > now()
-       returning *`,
+       returning id, tenant_id, provider_id, relay_state_hash, redirect_path, created_at, expires_at`,
       [relayStateHash]
     );
 
@@ -1270,7 +1294,7 @@ export const repository = {
     }
 
     const result = await pool.query(
-      `select * from saml_login_sessions
+      `select ${COLS.samlLoginSessions} from saml_login_sessions
        ${whereClause}
        order by updated_at desc
        limit 1`,
@@ -1308,7 +1332,7 @@ export const repository = {
       `update saml_logout_states
        set consumed_at = now()
        where relay_state_hash = $1 and consumed_at is null and expires_at > now()
-       returning *`,
+       returning id, tenant_id, provider_id, attorney_id, relay_state_hash, redirect_path, created_at, expires_at`,
       [relayStateHash]
     );
 
@@ -1333,7 +1357,7 @@ export const repository = {
     values.push(input.count);
     values.push(offset);
     const result = await pool.query(
-      `select * from scim_groups
+      `select ${COLS.scimGroups} from scim_groups
        ${whereClause}
        order by created_at asc
        limit $${values.length - 1} offset $${values.length}`,
@@ -1348,7 +1372,7 @@ export const repository = {
 
   async getScimGroup(groupId: string, tenantId: string) {
     const result = await pool.query(
-      `select * from scim_groups
+      `select ${COLS.scimGroups} from scim_groups
        where id = $1 and tenant_id = $2
        limit 1`,
       [groupId, tenantId]
@@ -1381,7 +1405,7 @@ export const repository = {
       `insert into scim_groups
        (id, tenant_id, display_name, description, external_id, updated_at)
        values ($1, $2, $3, $4, $5, now())
-       returning *`,
+       returning ${COLS.scimGroups}`,
       [input.id, input.tenantId, input.displayName, input.description ?? null, input.externalId ?? null]
     );
 
@@ -1402,7 +1426,7 @@ export const repository = {
            external_id = $5,
            updated_at = now()
        where id = $1 and tenant_id = $2
-       returning *`,
+       returning ${COLS.scimGroups}`,
       [input.groupId, input.tenantId, input.displayName, input.description ?? null, input.externalId ?? null]
     );
 
@@ -1452,7 +1476,7 @@ export const repository = {
     const result = await pool.query(
       `delete from scim_groups
        where id = $1 and tenant_id = $2
-       returning *`,
+       returning ${COLS.scimGroups}`,
       [groupId, tenantId]
     );
 
@@ -1587,13 +1611,13 @@ export const repository = {
   },
 
   async getDocument(documentId: string) {
-    const result = await pool.query("select * from documents where id = $1 limit 1", [documentId]);
+    const result = await pool.query(`select ${COLS.documents} from documents where id = $1 limit 1`, [documentId]);
     return result.rows[0] ? mapDocument(result.rows[0]) : undefined;
   },
 
   async getDocumentForTenant(documentId: string, tenantId: string) {
     const result = await pool.query(
-      "select * from documents where id = $1 and tenant_id = $2 limit 1",
+      `select ${COLS.documents} from documents where id = $1 and tenant_id = $2 limit 1`,
       [documentId, tenantId]
     );
     return result.rows[0] ? mapDocument(result.rows[0]) : undefined;
@@ -1601,14 +1625,14 @@ export const repository = {
 
   async getDocumentByShaForTenant(tenantId: string, sha256: string) {
     const result = await pool.query(
-      "select * from documents where tenant_id = $1 and sha256 = $2 limit 1",
+      `select ${COLS.documents} from documents where tenant_id = $1 and sha256 = $2 limit 1`,
       [tenantId, sha256]
     );
     return result.rows[0] ? mapDocument(result.rows[0]) : undefined;
   },
 
   async getMatterForTenant(matterId: string, tenantId: string) {
-    const result = await pool.query("select * from matters where id = $1 and tenant_id = $2 limit 1", [
+    const result = await pool.query(`select ${COLS.matters} from matters where id = $1 and tenant_id = $2 limit 1`, [
       matterId,
       tenantId
     ]);
@@ -1659,7 +1683,7 @@ export const repository = {
 
   async getClausesByDocument(documentId: string, tenantId: string, limit = 1000) {
     const result = await pool.query(
-      "select * from clauses where document_id = $1 and tenant_id = $2 order by created_at desc limit $3", 
+      `select ${COLS.clauses} from clauses where document_id = $1 and tenant_id = $2 order by created_at desc limit $3`, 
       [documentId, tenantId, limit]
     );
     return result.rows.map(mapClause);
@@ -1689,7 +1713,7 @@ export const repository = {
 
   async getFlagById(flagId: string, tenantId: string) {
     const result = await pool.query(
-      "select * from flags where id = $1 and tenant_id = $2 limit 1",
+      `select ${COLS.flags} from flags where id = $1 and tenant_id = $2 limit 1`,
       [flagId, tenantId]
     );
     return result.rows[0] ? mapFlag(result.rows[0]) : undefined;
@@ -1697,7 +1721,7 @@ export const repository = {
 
   async resolveFlag(flagId: string, tenantId: string) {
     const result = await pool.query(
-      "update flags set status = 'resolved', resolved_at = now() where id = $1 and tenant_id = $2 returning *",
+      `update flags set status = 'resolved', resolved_at = now() where id = $1 and tenant_id = $2 returning ${COLS.flags}`,
       [flagId, tenantId]
     );
     return result.rows[0] ? mapFlag(result.rows[0]) : undefined;
@@ -1705,7 +1729,7 @@ export const repository = {
 
   async updateFlagStatus(flagId: string, tenantId: string, status: "approved" | "rejected") {
     const result = await pool.query(
-      "update flags set status = $3, resolved_at = now() where id = $1 and tenant_id = $2 returning *",
+      `update flags set status = $3, resolved_at = now() where id = $1 and tenant_id = $2 returning ${COLS.flags}`,
       [flagId, tenantId, status]
     );
     return result.rows[0] ? mapFlag(result.rows[0]) : undefined;
@@ -1713,7 +1737,7 @@ export const repository = {
 
   async getMatterDocuments(matterId: string, tenantId: string) {
     const result = await pool.query(
-      "select * from documents where matter_id = $1 and tenant_id = $2 order by created_at desc limit 500",
+      `select ${COLS.documents} from documents where matter_id = $1 and tenant_id = $2 order by created_at desc limit 500`,
       [matterId, tenantId]
     );
     return result.rows.map(mapDocument);
@@ -1779,7 +1803,7 @@ export const repository = {
          limit $2
          for update skip locked
        )
-       returning *`,
+       returning id, tenant_id, job_type, status, payload, attempts, max_attempts, last_error, available_at, locked_at, locked_by, created_at, updated_at`,
       [workerId, limit]
     );
 

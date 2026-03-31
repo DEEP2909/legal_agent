@@ -14,6 +14,7 @@ import type {
   SsoProviderSummary,
   Tenant
 } from "@legal-agent/shared";
+import { validatePassword } from "@legal-agent/shared";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import {
@@ -55,17 +56,6 @@ import { SecurityPanel } from "./components/security";
 import { MaskedSecret } from "./components/shared/masked-secret";
 import { ResearchPanel } from "./research-panel";
 import { UploadPanel } from "./upload-panel";
-
-// Password validation helper
-function validatePassword(password: string): string[] {
-  const errors: string[] = [];
-  if (password.length < 12) errors.push("Password must be at least 12 characters");
-  if (!/[A-Z]/.test(password)) errors.push("Password must contain at least one uppercase letter");
-  if (!/[a-z]/.test(password)) errors.push("Password must contain at least one lowercase letter");
-  if (!/[0-9]/.test(password)) errors.push("Password must contain at least one number");
-  if (!/[^A-Za-z0-9]/.test(password)) errors.push("Password must contain at least one special character");
-  return errors;
-}
 
 type AuthView = "login" | "forgot" | "reset" | "invite" | "mfa";
 

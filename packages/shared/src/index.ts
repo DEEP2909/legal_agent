@@ -224,3 +224,50 @@ export interface RiskAssessmentRequest {
   clauseText: string;
   playbook: string[];
 }
+
+// Centralized password validation rules (Issue #21)
+export const PASSWORD_RULES = {
+  minLength: 12,
+  requireUppercase: true,
+  requireLowercase: true,
+  requireNumber: true,
+  requireSpecial: true
+} as const;
+
+export interface PasswordValidationError {
+  rule: keyof typeof PASSWORD_RULES;
+  message: string;
+}
+
+/**
+ * Validates a password against the centralized rules.
+ * Returns an array of error messages (empty array if valid).
+ */
+export function validatePassword(password: string): string[] {
+  const errors: string[] = [];
+  
+  if (password.length < PASSWORD_RULES.minLength) {
+    errors.push(`Password must be at least ${PASSWORD_RULES.minLength} characters`);
+  }
+  if (PASSWORD_RULES.requireUppercase && !/[A-Z]/.test(password)) {
+    errors.push("Password must contain at least one uppercase letter");
+  }
+  if (PASSWORD_RULES.requireLowercase && !/[a-z]/.test(password)) {
+    errors.push("Password must contain at least one lowercase letter");
+  }
+  if (PASSWORD_RULES.requireNumber && !/[0-9]/.test(password)) {
+    errors.push("Password must contain at least one number");
+  }
+  if (PASSWORD_RULES.requireSpecial && !/[^A-Za-z0-9]/.test(password)) {
+    errors.push("Password must contain at least one special character");
+  }
+  
+  return errors;
+}
+
+/**
+ * Checks if a password is valid (no validation errors).
+ */
+export function isValidPassword(password: string): boolean {
+  return validatePassword(password).length === 0;
+}

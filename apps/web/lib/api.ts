@@ -49,11 +49,22 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return response.json();
 }
 
+// Get CSRF token before sensitive operations
+async function getCsrfToken(): Promise<string> {
+  const response = await fetch(`${apiBaseUrl}/auth/csrf-token`, withCredentials({ cache: "no-store" }));
+  const data = await parseResponse<{ csrfToken: string }>(response);
+  return data.csrfToken;
+}
+
 export async function login(email: string, password: string, tenantId?: string): Promise<LoginResponse> {
+  // Get CSRF token first
+  const csrfToken = await getCsrfToken();
+  
   const response = await fetch(`${apiBaseUrl}/auth/login`, withCredentials({
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "x-csrf-token": csrfToken
     },
     body: JSON.stringify({ email, password, tenantId })
   }));

@@ -15,6 +15,7 @@ import { legalWorkflowService } from "./services.js";
 import { checkMalwareHealth } from "./malware.js";
 import { checkStorageHealth, persistUpload } from "./storage.js";
 import { repository } from "./repository.js";
+import { PASSWORD_RULES, validatePassword as sharedValidatePassword } from "@legal-agent/shared";
 
 const allowedMimeTypes = new Set([
   "application/pdf",
@@ -25,10 +26,10 @@ const allowedMimeTypes = new Set([
   "image/webp"
 ]);
 
-// Password complexity validation schema
+// Password complexity validation schema (uses centralized rules from shared package)
 const passwordSchema = z
   .string()
-  .min(12, "Password must be at least 12 characters")
+  .min(PASSWORD_RULES.minLength, `Password must be at least ${PASSWORD_RULES.minLength} characters`)
   .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
   .regex(/[a-z]/, "Password must contain at least one lowercase letter")
   .regex(/[0-9]/, "Password must contain at least one number")
@@ -85,7 +86,17 @@ export async function registerRoutes(app: FastifyInstance) {
     return { ok: true, storage, email, malware };
   });
 
-  app.post("/auth/login", authRateLimit, async (request, reply) => {
+  // CSRF token endpoint - client should call this before login
+  app.get("/auth/csrf-token", async (request, reply) => {
+    const token = await reply.generateCsrf();
+    return { csrfToken: token };
+  });
+
+  // Login with CSRF protection
+  app.post("/auth/login", { 
+    ...authRateLimit, 
+    preHandler: app.csrfProtection 
+  }, async (request, reply) => {
     const body = z
       .object({
         email: z.string().email(),
