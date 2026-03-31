@@ -92,7 +92,11 @@ function mapDocument(row: Record<string, unknown>): DocumentRecord {
     relevanceScore: Number(row.relevance_score ?? 0),
     storagePath: String(row.file_uri ?? ""),
     createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : undefined,
-    sha256: String(row.sha256 ?? "")
+    sha256: String(row.sha256 ?? ""),
+    pageCount: row.page_count != null ? Number(row.page_count) : undefined,
+    language: row.language ? String(row.language) : undefined,
+    ocrConfidence: row.ocr_confidence != null ? Number(row.ocr_confidence) : undefined,
+    createdBy: row.created_by ? String(row.created_by) : undefined
   };
 }
 
@@ -1534,8 +1538,8 @@ export const repository = {
     await pool.query(
       `insert into documents
        (id, tenant_id, matter_id, source_name, file_uri, sha256, mime_type, doc_type, ingestion_status, security_status,
-        security_reason, normalized_text, privilege_score, relevance_score, created_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())`,
+        security_reason, normalized_text, privilege_score, relevance_score, created_by, language, created_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now())`,
       [
         document.id,
         document.tenantId,
@@ -1550,7 +1554,9 @@ export const repository = {
         document.securityReason ?? null,
         document.normalizedText,
         document.privilegeScore,
-        document.relevanceScore
+        document.relevanceScore,
+        document.createdBy ?? null,
+        document.language ?? "en"
       ]
     );
     return document;
@@ -1574,6 +1580,9 @@ export const repository = {
            file_uri = $6,
            security_status = $7,
            security_reason = $8,
+           page_count = coalesce($9, page_count),
+           language = coalesce($10, language),
+           ocr_confidence = coalesce($11, ocr_confidence),
            scan_completed_at = case
              when $7 in ('clean', 'quarantined') then now()
              else scan_completed_at
@@ -1587,7 +1596,10 @@ export const repository = {
         next.relevanceScore,
         next.storagePath ?? "",
         next.securityStatus,
-        next.securityReason ?? null
+        next.securityReason ?? null,
+        next.pageCount ?? null,
+        next.language ?? null,
+        next.ocrConfidence ?? null
       ]
     );
 

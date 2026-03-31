@@ -50,6 +50,10 @@ export interface DocumentRecord {
   embedding?: number[];
   createdAt?: string;
   sha256?: string;
+  pageCount?: number;
+  language?: string;
+  ocrConfidence?: number;
+  createdBy?: string;
 }
 
 export interface ClauseRecord {

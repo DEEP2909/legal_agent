@@ -1522,7 +1522,9 @@ export const legalWorkflowService = {
         relevanceScore: 0.75,
         storagePath: input.storagePath,
         createdAt: new Date().toISOString(),
-        sha256: input.sha256
+        sha256: input.sha256,
+        createdBy: session.attorneyId,
+        language: "en"
       },
       session.tenantId
     );
@@ -1596,7 +1598,9 @@ export const legalWorkflowService = {
         relevanceScore: 0.75,
         storagePath: input.storagePath,
         createdAt: new Date().toISOString(),
-        sha256: input.sha256
+        sha256: input.sha256,
+        createdBy: session.attorneyId,
+        language: "en"
       },
       session.tenantId
     );
