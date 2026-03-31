@@ -914,6 +914,16 @@ export async function registerRoutes(app: FastifyInstance) {
       return legalWorkflowService.research(request.authSession, body.question);
     });
 
+    protectedApp.get("/api/research/history", async (request) => {
+      const query = z
+        .object({
+          limit: z.coerce.number().int().min(1).max(100).default(50),
+          offset: z.coerce.number().int().min(0).default(0)
+        })
+        .parse(request.query);
+      return legalWorkflowService.getResearchHistory(request.authSession, query);
+    });
+
     protectedApp.post("/api/review/feedback", async (request) => {
       const body = z
         .object({

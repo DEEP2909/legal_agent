@@ -14,13 +14,14 @@ import type {
   SsoProviderSummary,
   Tenant
 } from "@legal-agent/shared";
+import { randomUUID } from "node:crypto";
 import { pool } from "./database.js";
 
 // Explicit column lists for each table (Issue M3 - avoid SELECT *)
 const COLS = {
   tenants: "id, name, region, plan, created_at",
-  attorneys: "id, tenant_id, email, full_name, role, practice_area, password_hash, can_login, is_tenant_admin, mfa_enabled, mfa_secret, mfa_recovery_codes, mfa_enabled_at, last_login_at, is_active, failed_login_attempts, locked_until, created_at",
-  attorneysPublic: "id, tenant_id, email, full_name, role, practice_area, can_login, is_tenant_admin, is_active, created_at",
+  attorneys: "id, tenant_id, email, full_name, role, practice_area, password_hash, can_login, is_tenant_admin, must_reset_password, mfa_enabled, mfa_secret, mfa_recovery_codes, mfa_enabled_at, last_login_at, is_active, failed_login_attempts, locked_until, created_at",
+  attorneysPublic: "id, tenant_id, email, full_name, role, practice_area, can_login, is_tenant_admin, must_reset_password, is_active, created_at",
   matters: "id, tenant_id, matter_code, title, client_name, matter_type, status, jurisdiction, responsible_attorney_id, opened_at, closed_at",
   documents: "id, tenant_id, matter_id, source_name, file_uri, sha256, mime_type, page_count, language, doc_type, ingestion_status, security_status, security_reason, scan_completed_at, normalized_text, ocr_confidence, dedup_group_id, privilege_score, relevance_score, created_by, created_at",
   clauses: "id, tenant_id, document_id, clause_type, heading, text_excerpt, page_from, page_to, source_span, extracted_entities, risk_level, confidence, reviewer_status, created_at",
@@ -48,7 +49,8 @@ function mapAttorney(row: Record<string, unknown>): Attorney {
     role: row.role as Attorney["role"],
     practiceArea: String(row.practice_area ?? ""),
     isTenantAdmin: Boolean(row.is_tenant_admin),
-    canLogin: Boolean(row.can_login)
+    canLogin: Boolean(row.can_login),
+    mustResetPassword: Boolean(row.must_reset_password)
   };
 }
 
@@ -501,11 +503,12 @@ export const repository = {
     isTenantAdmin: boolean;
     canLogin?: boolean;
     isActive?: boolean;
+    mustResetPassword?: boolean;
   }) {
     const result = await pool.query(
       `insert into attorneys
-       (id, tenant_id, email, full_name, role, practice_area, password_hash, can_login, is_tenant_admin, is_active)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (id, tenant_id, email, full_name, role, practice_area, password_hash, can_login, is_tenant_admin, is_active, must_reset_password)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        returning ${COLS.attorneysPublic}`,
       [
         input.id,
@@ -517,7 +520,8 @@ export const repository = {
         input.passwordHash,
         input.canLogin ?? true,
         input.isTenantAdmin,
-        input.isActive ?? true
+        input.isActive ?? true,
+        input.mustResetPassword ?? true  // Default to requiring password reset for direct creations
       ]
     );
 
@@ -787,7 +791,7 @@ export const repository = {
   async updateAttorneyPassword(attorneyId: string, passwordHash: string) {
     await pool.query(
       `update attorneys
-       set password_hash = $2, can_login = true
+       set password_hash = $2, can_login = true, must_reset_password = false
        where id = $1`,
       [attorneyId, passwordHash]
     );
@@ -1768,8 +1772,61 @@ export const repository = {
     }));
   },
 
-  async recordResearch(_: ResearchResponse) {
-    return true;
+  async recordResearch(input: {
+    tenantId: string;
+    attorneyId?: string;
+    question: string;
+    result: ResearchResponse;
+    modelName?: string;
+    sourceDocumentIds?: string[];
+    contextUsed?: string;
+  }) {
+    const id = randomUUID();
+    await pool.query(
+      `insert into research_queries (id, tenant_id, attorney_id, question, answer, model_name, source_document_ids, context_used)
+       values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
+      [
+        id,
+        input.tenantId,
+        input.attorneyId ?? null,
+        input.question,
+        input.result.answer,
+        input.modelName ?? null,
+        JSON.stringify(input.sourceDocumentIds ?? []),
+        input.contextUsed ?? null
+      ]
+    );
+    return id;
+  },
+
+  async getResearchHistory(tenantId: string, opts?: { attorneyId?: string; limit?: number; offset?: number }) {
+    const limit = Math.min(opts?.limit ?? 50, 100);
+    const offset = opts?.offset ?? 0;
+    
+    let query = `select id, tenant_id, attorney_id, question, answer, model_name, source_document_ids, context_used, created_at
+                 from research_queries where tenant_id = $1`;
+    const params: (string | number)[] = [tenantId];
+    
+    if (opts?.attorneyId) {
+      params.push(opts.attorneyId);
+      query += ` and attorney_id = $${params.length}`;
+    }
+    
+    query += ` order by created_at desc limit $${params.length + 1} offset $${params.length + 2}`;
+    params.push(limit, offset);
+    
+    const result = await pool.query(query, params);
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      tenantId: String(row.tenant_id),
+      attorneyId: row.attorney_id ? String(row.attorney_id) : undefined,
+      question: String(row.question),
+      answer: String(row.answer ?? ""),
+      modelName: row.model_name ? String(row.model_name) : undefined,
+      sourceDocumentIds: Array.isArray(row.source_document_ids) ? row.source_document_ids : [],
+      contextUsed: row.context_used ? String(row.context_used) : undefined,
+      createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : undefined
+    }));
   },
 
   async createWorkflowJob(input: {
@@ -1831,16 +1888,19 @@ export const repository = {
     const attempts = Number(job.rows[0]?.attempts ?? 0);
     const finalFailure = attempts >= maxAttempts;
 
+    // Exponential backoff: attempt 1 → 30s, attempt 2 → 5min, attempt 3+ → 30min (capped)
+    const backoffSeconds = Math.min(30 * Math.pow(10, attempts - 1), 1800);
+
     await pool.query(
       `update workflow_jobs
        set status = case when attempts >= $3 then 'failed' else 'queued' end,
            last_error = $2,
            updated_at = now(),
-           available_at = case when attempts >= $3 then available_at else now() + interval '30 seconds' end,
+           available_at = case when attempts >= $3 then available_at else now() + ($4 || ' seconds')::interval end,
            locked_at = null,
            locked_by = null
        where id = $1`,
-      [jobId, error.slice(0, 2000), maxAttempts]
+      [jobId, error.slice(0, 2000), maxAttempts, backoffSeconds]
     );
 
     return finalFailure;

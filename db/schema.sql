@@ -16,6 +16,7 @@ create table if not exists attorneys (
   password_hash text,
   can_login boolean not null default true,
   is_tenant_admin boolean not null default false,
+  must_reset_password boolean not null default false,
   mfa_enabled boolean not null default false,
   mfa_secret text,
   mfa_recovery_codes jsonb not null default '[]'::jsonb,
@@ -368,6 +369,18 @@ create table if not exists saml_request_cache (
   created_at timestamptz not null default now()
 );
 
+create table if not exists research_queries (
+  id uuid primary key,
+  tenant_id uuid not null references tenants(id),
+  attorney_id uuid references attorneys(id),
+  question text not null,
+  answer text,
+  model_name text,
+  source_document_ids jsonb not null default '[]'::jsonb,
+  context_used text,
+  created_at timestamptz not null default now()
+);
+
 create index if not exists idx_documents_matter on documents (matter_id, created_at desc);
 create index if not exists idx_clauses_document on clauses (document_id, clause_type);
 create index if not exists idx_flags_status on flags (tenant_id, status, severity);
@@ -390,6 +403,8 @@ create index if not exists idx_saml_logout_states_provider on saml_logout_states
 create index if not exists idx_scim_groups_tenant on scim_groups (tenant_id, created_at desc);
 create index if not exists idx_scim_group_members_attorney on scim_group_members (attorney_id);
 create index if not exists idx_saml_request_cache_expires on saml_request_cache (expires_at);
+create index if not exists idx_research_queries_tenant on research_queries (tenant_id, created_at desc);
+create index if not exists idx_research_queries_attorney on research_queries (attorney_id, created_at desc);
 
 -- Note: All columns below are already defined in their respective CREATE TABLE statements above.
 -- These ALTER TABLE statements were kept as migration-safe idempotent stubs during the initial

@@ -12,6 +12,7 @@ export interface Attorney {
   practiceArea: string;
   isTenantAdmin?: boolean;
   canLogin?: boolean;
+  mustResetPassword?: boolean;
 }
 
 export interface Tenant {
@@ -111,6 +112,7 @@ export interface LoginSuccessResponse {
   accessToken: string;
   expiresInSeconds: number;
   session: AuthSession;
+  mustResetPassword?: boolean;
 }
 
 export interface MfaChallengeResponse {

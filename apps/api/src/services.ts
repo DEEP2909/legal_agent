@@ -261,12 +261,13 @@ async function buildScimGroupFromRow(row: Record<string, unknown>) {
   };
 }
 
-function buildLoginSuccessResponse(session: AuthSession): LoginResponse {
+function buildLoginSuccessResponse(session: AuthSession, mustResetPassword?: boolean): LoginResponse {
   return {
     mfaRequired: false,
     accessToken: createAccessToken(session),
     expiresInSeconds: getLoginExpirySeconds(),
-    session
+    session,
+    mustResetPassword
   };
 }
 
@@ -443,7 +444,9 @@ export const legalWorkflowService = {
       objectId: session.attorneyId
     });
 
-    return buildLoginSuccessResponse(session);
+    // Check if password reset is required (direct-created accounts)
+    const mustResetPassword = Boolean(attorney.must_reset_password);
+    return buildLoginSuccessResponse(session, mustResetPassword);
   },
 
   async me(session: AuthSession) {
@@ -1759,10 +1762,22 @@ export const legalWorkflowService = {
       ({ document, score }) =>
         `${document.sourceName} (semantic score ${score.toFixed(2)}): ${document.normalizedText.slice(0, 700)}`
     );
+    const sourceDocumentIds = rankedDocuments.map(({ document }) => document.id);
 
     const prompt = buildResearchPrompt({ question, corpus });
     const result = await answerResearchWithOpenAI(prompt);
-    await repository.recordResearch(result);
+    
+    // Save research query to history
+    await repository.recordResearch({
+      tenantId: session.tenantId,
+      attorneyId: session.attorneyId,
+      question,
+      result,
+      modelName: config.openAiModel,
+      sourceDocumentIds,
+      contextUsed: corpus.join("\n\n")
+    });
+    
     await repository.recordAuditEvent({
       id: randomUUID(),
       tenantId: session.tenantId,
@@ -1775,6 +1790,14 @@ export const legalWorkflowService = {
       }
     });
     return result;
+  },
+
+  async getResearchHistory(session: AuthSession, opts?: { limit?: number; offset?: number }) {
+    return repository.getResearchHistory(session.tenantId, {
+      attorneyId: session.attorneyId,
+      limit: opts?.limit,
+      offset: opts?.offset
+    });
   },
 
   async reviewFeedback(session: AuthSession, input: {

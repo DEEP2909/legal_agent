@@ -280,6 +280,7 @@ Browser login for the seeded tenant admin:
 - `POST /api/documents/extract`
 - `POST /api/flags/assess`
 - `POST /api/research/query`
+- `GET /api/research/history`
 - `POST /api/review/feedback`
 
 Health endpoints:
