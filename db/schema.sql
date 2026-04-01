@@ -414,11 +414,12 @@ create index if not exists idx_research_queries_attorney on research_queries (at
 create index if not exists idx_document_chunks_document on document_chunks (document_id);
 create index if not exists idx_document_chunks_tenant on document_chunks (tenant_id, document_id);
 
--- IVFFlat index for approximate nearest-neighbor vector search
--- lists = sqrt(expected rows). Start with 100, tune based on corpus size.
+-- HNSW index for vector similarity search (supports dimensions > 2000, unlike IVFFlat)
+-- text-embedding-3-large uses 3072 dimensions, which exceeds IVFFlat's 2000 limit
+-- m=16: connections per node, ef_construction=64: build-time accuracy/speed tradeoff
 create index if not exists idx_document_chunks_embedding
-  on document_chunks using ivfflat (embedding vector_cosine_ops)
-  with (lists = 100);
+  on document_chunks using hnsw (embedding vector_cosine_ops)
+  with (m = 16, ef_construction = 64);
 
 -- Playbooks table for tenant-specific risk assessment rules
 create table if not exists playbooks (
