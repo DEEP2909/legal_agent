@@ -27,7 +27,7 @@ const MAX_CONCURRENT_EMBEDDINGS = 5; // limit concurrent API calls
  * Split text into overlapping chunks for better semantic search coverage.
  * This ensures that context isn't lost at chunk boundaries.
  */
-function chunkText(text: string): string[] {
+export function chunkText(text: string): string[] {
   const chunks: string[] = [];
   for (let i = 0; i < text.length; i += CHUNK_SIZE - CHUNK_OVERLAP) {
     const chunk = text.slice(i, i + CHUNK_SIZE);
@@ -41,7 +41,7 @@ function chunkText(text: string): string[] {
 /**
  * Embed multiple chunks with concurrency limiting to avoid rate limits.
  */
-async function embedChunksWithConcurrencyLimit(
+export async function embedChunksWithConcurrencyLimit(
   chunks: string[]
 ): Promise<Array<{ index: number; text: string; embedding: number[] }>> {
   const results: Array<{ index: number; text: string; embedding: number[] }> = [];
@@ -148,11 +148,18 @@ export async function processPendingDocuments() {
             throw new Error("Document cannot be ingested until malware scanning is complete.");
           }
 
-          const normalizedText =
-            document.normalizedText.trim() ||
-            (document.storagePath
-              ? await extractTextForIngestion(document.storagePath, document.mimeType)
-              : "");
+          let normalizedText: string;
+          let pageCount: number | null = null;
+          
+          if (document.normalizedText.trim()) {
+            normalizedText = document.normalizedText.trim();
+          } else if (document.storagePath) {
+            const result = await extractTextForIngestion(document.storagePath, document.mimeType);
+            normalizedText = result.text;
+            pageCount = result.pageCount;
+          } else {
+            normalizedText = "";
+          }
 
           // Chunk the document text for better semantic search coverage
           const chunks = chunkText(normalizedText);
@@ -172,6 +179,7 @@ export async function processPendingDocuments() {
             ...existing,
             normalizedText,
             embedding: firstEmbedding,
+            pageCount: pageCount ?? existing.pageCount,
             ingestionStatus: "normalized",
             securityStatus: "clean",
             securityReason: undefined

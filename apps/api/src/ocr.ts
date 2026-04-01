@@ -125,32 +125,40 @@ async function runVisionOcr(buffer: Buffer, mimeType: string) {
   return runOpenAiImageOcr(buffer, mimeType);
 }
 
-export async function extractTextForIngestion(storagePath: string, mimeType: string) {
+export interface ExtractionResult {
+  text: string;
+  pageCount: number | null;
+}
+
+export async function extractTextForIngestion(storagePath: string, mimeType: string): Promise<ExtractionResult> {
   const buffer = await readStoredObject(storagePath);
 
   if (mimeType.startsWith("text/") || mimeType === "application/json") {
-    return buffer.toString("utf8");
+    return { text: buffer.toString("utf8"), pageCount: null };
   }
 
   if (mimeType === "application/pdf") {
     const { text, totalPages } = await extractText(new Uint8Array(buffer), { mergePages: true });
     if (text.trim()) {
-      return text;
+      return { text, pageCount: totalPages ?? null };
     }
 
     // Scanned PDF — fall back to OCR provider
     if (["azure_document_intelligence", "hybrid"].includes(config.ocrProvider)) {
-      return runAzureDocumentIntelligenceOcr(buffer, mimeType);
+      const ocrText = await runAzureDocumentIntelligenceOcr(buffer, mimeType);
+      return { text: ocrText, pageCount: totalPages ?? null };
     }
 
     // For openai provider, use vision OCR on scanned PDFs
     if (config.ocrProvider === "openai") {
-      return runOpenAiImageOcr(buffer, mimeType);
+      const ocrText = await runOpenAiImageOcr(buffer, mimeType);
+      return { text: ocrText, pageCount: totalPages ?? null };
     }
   }
 
   if (mimeType.startsWith("image/")) {
-    return runVisionOcr(buffer, mimeType);
+    const ocrText = await runVisionOcr(buffer, mimeType);
+    return { text: ocrText, pageCount: 1 };
   }
 
   throw new Error(

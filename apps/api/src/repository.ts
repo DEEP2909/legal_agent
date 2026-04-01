@@ -50,7 +50,9 @@ function mapAttorney(row: Record<string, unknown>): Attorney {
     practiceArea: String(row.practice_area ?? ""),
     isTenantAdmin: Boolean(row.is_tenant_admin),
     canLogin: Boolean(row.can_login),
-    mustResetPassword: Boolean(row.must_reset_password)
+    mustResetPassword: Boolean(row.must_reset_password),
+    isActive: Boolean(row.is_active),
+    lastLoginAt: row.last_login_at ? new Date(String(row.last_login_at)).toISOString() : undefined
   };
 }
 

@@ -41,6 +41,7 @@ import {
   clauseExtractionSystemPrompt
 } from "./prompts.js";
 import { repository } from "./repository.js";
+import { chunkText, embedChunksWithConcurrencyLimit } from "./worker.js";
 import {
   buildSamlAuthorizeUrl,
   buildSamlLogoutResponseUrl,
@@ -1530,7 +1531,17 @@ export const legalWorkflowService = {
     );
 
     if (document.normalizedText) {
-      document.embedding = await embedTextWithOpenAI(document.normalizedText.slice(0, 4000));
+      // Use chunking for better semantic search coverage (same as worker.ts)
+      const chunks = chunkText(document.normalizedText);
+      const chunkRows = chunks.length > 0
+        ? await embedChunksWithConcurrencyLimit(chunks)
+        : [];
+      
+      // Save all chunks to the database
+      await repository.saveDocumentChunks(document.id, session.tenantId, chunkRows);
+      
+      // Store the first chunk's embedding on the document for backward compatibility
+      document.embedding = chunkRows[0]?.embedding ?? [];
     }
 
     await repository.addDocument(document);

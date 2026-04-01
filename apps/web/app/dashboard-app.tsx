@@ -124,6 +124,23 @@ export function DashboardApp() {
     setAuthView("login");
   }
 
+  // Handle errors with proper ApiError status code checking
+  function handleApiError(err: unknown, defaultMessage: string) {
+    if (err instanceof ApiError) {
+      if (err.status === 401) {
+        // Session expired - clear state and go to login
+        clearSession();
+        setError("Your session has expired. Please sign in again.");
+        return;
+      }
+      setError(err.message);
+    } else if (err instanceof Error) {
+      setError(err.message);
+    } else {
+      setError(defaultMessage);
+    }
+  }
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const inviteQueryToken = params.get("inviteToken");
@@ -239,9 +256,7 @@ export function DashboardApp() {
                       // Cookie is set by server - just refresh session
                       await refreshAll();
                     } catch (passkeyError) {
-                      setError(
-                        passkeyError instanceof Error ? passkeyError.message : "Passkey sign-in failed."
-                      );
+                      handleApiError(passkeyError, "Passkey sign-in failed.");
                     }
                   })
                 }
@@ -259,7 +274,7 @@ export function DashboardApp() {
                       // Cookie is set by server - just refresh session
                       await refreshAll();
                     } catch (loginError) {
-                      setError(loginError instanceof Error ? loginError.message : "Login failed.");
+                      handleApiError(loginError, "Login failed.");
                     }
                   })
                 }
@@ -293,9 +308,7 @@ export function DashboardApp() {
                       setMfaAvailableMethods([]);
                       await refreshAll();
                     } catch (passkeyError) {
-                      setError(
-                        passkeyError instanceof Error ? passkeyError.message : "Passkey verification failed."
-                      );
+                      handleApiError(passkeyError, "Passkey verification failed.");
                     }
                   })
                 }
@@ -314,7 +327,7 @@ export function DashboardApp() {
                       setMfaAvailableMethods([]);
                       await refreshAll();
                     } catch (mfaError) {
-                      setError(mfaError instanceof Error ? mfaError.message : "MFA verification failed.");
+                      handleApiError(mfaError, "MFA verification failed.");
                     }
                   })
                 }
@@ -337,9 +350,7 @@ export function DashboardApp() {
                           : "If the email exists, a reset link has been issued."
                       );
                     } catch (forgotError) {
-                      setError(
-                        forgotError instanceof Error ? forgotError.message : "Reset request failed."
-                      );
+                      handleApiError(forgotError, "Reset request failed.");
                     }
                   })
                 }
@@ -360,7 +371,7 @@ export function DashboardApp() {
                       setError("Password updated. Please sign in.");
                       setAuthView("login");
                     } catch (resetError) {
-                      setError(resetError instanceof Error ? resetError.message : "Reset failed.");
+                      handleApiError(resetError, "Reset failed.");
                     }
                   })
                 }
@@ -385,9 +396,7 @@ export function DashboardApp() {
                       // Cookie is set by server - just refresh session
                       await refreshAll();
                     } catch (inviteError) {
-                      setError(
-                        inviteError instanceof Error ? inviteError.message : "Invitation acceptance failed."
-                      );
+                      handleApiError(inviteError, "Invitation acceptance failed.");
                     }
                   })
                 }
@@ -627,8 +636,9 @@ function LoginForm({
     
     if (!password) {
       errors.push("Password is required");
-    } else if (password.length < 12) {
-      errors.push("Password must be at least 12 characters");
+    } else {
+      const passwordErrors = validatePassword(password);
+      errors.push(...passwordErrors);
     }
     
     setValidationErrors(errors);

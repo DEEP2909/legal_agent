@@ -374,7 +374,7 @@ create table if not exists research_queries (
   tenant_id uuid not null references tenants(id),
   attorney_id uuid references attorneys(id),
   question text not null,
-  answer text,
+  answer text not null default '',
   model_name text,
   source_document_ids jsonb not null default '[]'::jsonb,
   context_used text,
