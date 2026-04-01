@@ -26,7 +26,10 @@ COPY --chown=appuser:appgroup package.json package-lock.json ./
 # Drop to non-root before starting
 USER appuser
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "process.exit(0)" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "\
+    const t = require('fs').readFileSync('/tmp/worker-heartbeat','utf8');\
+    if (Date.now() - Number(t) > 120000) process.exit(1);\
+  " || exit 1
 
 CMD ["node", "apps/api/dist/worker-main.js"]

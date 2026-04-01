@@ -903,8 +903,11 @@ export const repository = {
     return result.rows[0] ?? null;
   },
 
-  async getSsoProviderById(providerId: string) {
-    const result = await pool.query(`select ${COLS.ssoProviders} from sso_providers where id = $1 limit 1`, [providerId]);
+  async getSsoProviderById(providerId: string, tenantId: string) {
+    const result = await pool.query(
+      `select ${COLS.ssoProviders} from sso_providers where id = $1 and tenant_id = $2 limit 1`,
+      [providerId, tenantId]
+    );
     return result.rows[0] ?? null;
   },
 
@@ -1858,10 +1861,16 @@ export const repository = {
     return result.rows[0] ? mapFlag(result.rows[0]) : undefined;
   },
 
-  async getMatterDocuments(matterId: string, tenantId: string) {
+  async getMatterDocuments(
+    matterId: string,
+    tenantId: string,
+    options?: { limit?: number; offset?: number }
+  ) {
+    const limit = Math.min(options?.limit ?? 50, 100); // Cap at 100 per page
+    const offset = options?.offset ?? 0;
     const result = await pool.query(
-      `select ${COLS.documents} from documents where matter_id = $1 and tenant_id = $2 order by created_at desc limit 500`,
-      [matterId, tenantId]
+      `select ${COLS.documents} from documents where matter_id = $1 and tenant_id = $2 order by created_at desc limit $3 offset $4`,
+      [matterId, tenantId, limit, offset]
     );
     return result.rows.map(mapDocument);
   },

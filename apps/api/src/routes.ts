@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { fileTypeFromBuffer } from "file-type";
 import {
   requireAuth,
   requirePlatformAdmin,
@@ -77,13 +78,11 @@ const platformAdminRateLimit = {
 export async function registerRoutes(app: FastifyInstance) {
   app.get("/health/live", async () => ({ ok: true }));
   app.get("/health/ready", async () => {
+    // Check all dependencies but don't expose topology details
     await checkDatabaseConnection();
-    const [storage, email, malware] = await Promise.all([
-      checkStorageHealth(),
-      checkEmailHealth(),
-      checkMalwareHealth()
-    ]);
-    return { ok: true, storage, email, malware };
+    await Promise.all([checkStorageHealth(), checkEmailHealth(), checkMalwareHealth()]);
+    // Return minimal response - load balancers only need 200 status
+    return { ok: true };
   });
 
   // CSRF token endpoint - client should call this before login
@@ -1019,9 +1018,15 @@ export async function registerRoutes(app: FastifyInstance) {
       }
     );
 
+    // Upload/ingest endpoints rate-limited to prevent abuse and quota exhaustion
+    const uploadRateLimitConfig = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
+
     protectedApp.post(
       "/api/documents/ingest",
-      { preHandler: requireRole(["partner", "associate", "paralegal", "admin"]) },
+      {
+        ...uploadRateLimitConfig,
+        preHandler: requireRole(["partner", "associate", "paralegal", "admin"])
+      },
       async (request, reply) => {
         const body = z
           .object({
@@ -1045,16 +1050,26 @@ export async function registerRoutes(app: FastifyInstance) {
 
     protectedApp.post(
       "/api/documents/upload",
-      { preHandler: requireRole(["partner", "associate", "paralegal", "admin"]) },
+      {
+        ...uploadRateLimitConfig,
+        preHandler: requireRole(["partner", "associate", "paralegal", "admin"])
+      },
       async (request, reply) => {
         const file = await request.file();
         if (!file) {
           reply.code(400);
           return { error: "File is required" };
         }
-        if (!allowedMimeTypes.has(file.mimetype)) {
+
+        // Buffer the file to validate magic bytes (actual content, not just header)
+        const buffer = await file.toBuffer();
+        const detected = await fileTypeFromBuffer(buffer);
+        // For text files that have no magic bytes, fall back to declared MIME type
+        const detectedMime = detected?.mime ?? (file.mimetype === "text/plain" ? "text/plain" : "application/octet-stream");
+
+        if (!allowedMimeTypes.has(detectedMime)) {
           reply.code(400);
-          return { error: "Unsupported file type" };
+          return { error: "Unsupported or mismatched file type" };
         }
 
         const fields = {
@@ -1063,19 +1078,18 @@ export async function registerRoutes(app: FastifyInstance) {
           normalizedText: readFieldValue(file.fields.normalizedText)
         };
 
-        const buffer = await file.toBuffer();
         const sha256 = createHash("sha256").update(buffer).digest("hex");
         const { storagePath } = await persistUpload({
           originalName: file.filename || `${randomUUID()}.bin`,
           buffer,
-          mimeType: file.mimetype,
+          mimeType: detectedMime, // Use detected MIME type
           prefix: "quarantine"
         });
 
         const document = await legalWorkflowService.queueUploadedDocument(request.authSession, {
           matterId: fields.matterId,
           sourceName: file.filename || "uploaded-file",
-          mimeType: file.mimetype,
+          mimeType: detectedMime,
           docType: fields.docType,
           storagePath,
           sha256
@@ -1116,7 +1130,7 @@ export async function registerRoutes(app: FastifyInstance) {
           matterId: z.string().uuid(),
           documentId: z.string().uuid(),
           clauseId: z.string().uuid().optional(),
-          clauseText: z.string(),
+          clauseText: z.string().min(10).max(8000),
           playbook: z.array(z.string()).default([])
         })
         .parse(request.body);
@@ -1125,7 +1139,7 @@ export async function registerRoutes(app: FastifyInstance) {
     });
 
     protectedApp.post("/api/research/query", aiRateLimitConfig, async (request) => {
-      const body = z.object({ question: z.string().min(5) }).parse(request.body);
+      const body = z.object({ question: z.string().min(5).max(2000) }).parse(request.body);
       return legalWorkflowService.research(request.authSession, body.question);
     });
 

@@ -1,10 +1,23 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { config } from "./config.js";
 import { embedTextWithOpenAI } from "./openaiClient.js";
 import { scanBufferForThreats } from "./malware.js";
 import { extractTextForIngestion } from "./ocr.js";
 import { repository } from "./repository.js";
 import { moveStoredObject, readStoredObject } from "./storage.js";
+
+// Heartbeat file path for Docker health check
+const HEARTBEAT_FILE = "/tmp/worker-heartbeat";
+
+/** Write current timestamp to heartbeat file for health checks */
+function writeHeartbeat() {
+  try {
+    writeFileSync(HEARTBEAT_FILE, Date.now().toString());
+  } catch {
+    // Ignore errors (e.g., read-only filesystem in some envs)
+  }
+}
 
 /**
  * In-process concurrency guard. If this worker is scaled to multiple processes,
@@ -215,13 +228,22 @@ export async function processPendingDocuments() {
 }
 
 export function startWorker() {
+  // Write initial heartbeat
+  writeHeartbeat();
+  
   // Run job recovery on startup and periodically
   void recoverStuckJobs();
   setInterval(() => {
     void recoverStuckJobs();
   }, JOB_TIMEOUT_MS / 2); // Check for stuck jobs at half the timeout interval
   
+  // Write heartbeat every 30 seconds to signal liveness
   setInterval(() => {
+    writeHeartbeat();
+  }, 30_000);
+  
+  setInterval(() => {
+    writeHeartbeat(); // Also write heartbeat on each poll cycle
     void processPendingDocuments();
   }, config.jobPollIntervalMs);
   void processPendingDocuments();

@@ -105,7 +105,7 @@ async function seedDatabase() {
       await pool.query(
         `insert into document_chunks
          (id, tenant_id, document_id, page_from, page_to, chunk_index, text_content, citation_json, embedding)
-         values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::float8[])`,
+         values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::halfvec)`,
         [
           `${document.id}-chunk-1`,
           "tenant-demo",

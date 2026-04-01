@@ -1178,8 +1178,11 @@ export const legalWorkflowService = {
       throw new Error("SSO state is invalid or expired.");
     }
 
-    const providerRecord = await repository.getSsoProviderById(String(stateRecord.provider_id));
-    if (!providerRecord || String(providerRecord.tenant_id) !== String(stateRecord.tenant_id)) {
+    const providerRecord = await repository.getSsoProviderById(
+      String(stateRecord.provider_id),
+      String(stateRecord.tenant_id)
+    );
+    if (!providerRecord) {
       throw new Error("SSO provider not found for callback.");
     }
 
@@ -1251,8 +1254,11 @@ export const legalWorkflowService = {
       throw new Error("SAML relay state is invalid or expired.");
     }
 
-    const providerRecord = await repository.getSsoProviderById(String(relayStateRecord.provider_id));
-    if (!providerRecord || String(providerRecord.tenant_id) !== String(relayStateRecord.tenant_id)) {
+    const providerRecord = await repository.getSsoProviderById(
+      String(relayStateRecord.provider_id),
+      String(relayStateRecord.tenant_id)
+    );
+    if (!providerRecord) {
       throw new Error("SAML provider not found for callback.");
     }
 
@@ -1685,9 +1691,13 @@ export const legalWorkflowService = {
       throw new Error("Document not found for tenant.");
     }
 
+    // Truncate text to ~15k tokens to avoid exceeding context window and control cost
+    const MAX_CHARS = 60_000;
+    const safeText = (input.normalizedText || document.normalizedText || "").slice(0, MAX_CHARS);
+
     const prompt = `${clauseExtractionSystemPrompt}\n\n${buildClauseExtractionPrompt({
       documentType: input.documentType || document.docType,
-      normalizedText: input.normalizedText || document.normalizedText
+      normalizedText: safeText
     })}`;
     const result = await extractClausesWithOpenAI(prompt);
 
@@ -1925,6 +1935,8 @@ export const legalWorkflowService = {
       isTenantAdmin: boolean;
     }
   ) {
+    // Create attorney with login disabled - they must complete password reset flow
+    // This ensures email ownership is verified before account becomes active
     const attorney = await repository.createAttorney({
       id: randomUUID(),
       tenantId: session.tenantId,
@@ -1933,8 +1945,13 @@ export const legalWorkflowService = {
       role: input.role,
       practiceArea: input.practiceArea,
       passwordHash: await hashPassword(input.password),
-      isTenantAdmin: input.isTenantAdmin
+      isTenantAdmin: input.isTenantAdmin,
+      canLogin: false,           // Cannot login until password reset
+      mustResetPassword: true    // Must reset password to verify email
     });
+
+    // Send password reset email to verify email ownership
+    await this.forgotPassword({ email: input.email, tenantId: session.tenantId });
 
     await repository.recordAuditEvent({
       id: randomUUID(),

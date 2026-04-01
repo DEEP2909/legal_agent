@@ -126,7 +126,13 @@ const researchSchema = z.object({
   )
 });
 
-const client = config.openAiApiKey ? new OpenAI({ apiKey: config.openAiApiKey }) : null;
+const client = config.openAiApiKey
+  ? new OpenAI({
+      apiKey: config.openAiApiKey,
+      maxRetries: 3,      // Auto-retry on 429 / 5xx with exponential backoff
+      timeout: 120_000,   // 2 min hard timeout per request
+    })
+  : null;
 
 async function runJsonPrompt<T>(
   prompt: string,
