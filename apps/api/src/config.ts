@@ -71,7 +71,13 @@ const schema = z
     WEB_APP_URL: z.string().url().default("http://localhost:3000"),
     PUBLIC_API_BASE_URL: z.string().url().default("http://localhost:4000"),
     ACCOUNT_LOCKOUT_THRESHOLD: z.coerce.number().default(5),
-    ACCOUNT_LOCKOUT_DURATION_MINUTES: z.coerce.number().default(15)
+    ACCOUNT_LOCKOUT_DURATION_MINUTES: z.coerce.number().default(15),
+    // Database pool settings
+    DB_POOL_MAX: z.coerce.number().default(10),
+    DB_IDLE_TIMEOUT_MS: z.coerce.number().default(30000),
+    DB_CONNECT_TIMEOUT_MS: z.coerce.number().default(10000),
+    // Demo data seeding - must be explicitly opted-in
+    SEED_DEMO_DATA: booleanFromString.default(false)
   })
   .superRefine((env, ctx) => {
     if (env.STORAGE_BACKEND === "s3" && !env.S3_BUCKET) {
@@ -170,5 +176,18 @@ export const config = {
   webAppUrl: env.WEB_APP_URL,
   publicApiBaseUrl: env.PUBLIC_API_BASE_URL,
   accountLockoutThreshold: env.ACCOUNT_LOCKOUT_THRESHOLD,
-  accountLockoutDurationMinutes: env.ACCOUNT_LOCKOUT_DURATION_MINUTES
+  accountLockoutDurationMinutes: env.ACCOUNT_LOCKOUT_DURATION_MINUTES,
+  dbPoolMax: env.DB_POOL_MAX,
+  dbIdleTimeoutMs: env.DB_IDLE_TIMEOUT_MS,
+  dbConnectTimeoutMs: env.DB_CONNECT_TIMEOUT_MS,
+  seedDemoData: env.SEED_DEMO_DATA
 } as const;
+
+// Production safety warnings
+if (config.nodeEnv === "production" && config.malwareScanner === "none") {
+  console.warn(
+    "[security] ⚠️  MALWARE_SCANNER=none in production. " +
+    "All uploaded files will be stored without malware scanning. " +
+    "Set MALWARE_SCANNER=clamav and configure CLAMAV_HOST to enable scanning."
+  );
+}

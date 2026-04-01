@@ -333,7 +333,12 @@ describe("research response handling", () => {
 });
 
 describe("tenant context validation", () => {
-  function ensureTenantContext<T extends { tenantId?: string }>(
+  interface EntityWithOptionalTenant {
+    tenantId?: string;
+    [key: string]: unknown;
+  }
+  
+  function ensureTenantContext<T extends EntityWithOptionalTenant>(
     entity: T,
     sessionTenantId: string
   ): T & { tenantId: string } {
@@ -344,7 +349,7 @@ describe("tenant context validation", () => {
   }
 
   it("should set tenantId from session", () => {
-    const entity = { name: "Test Document" };
+    const entity: EntityWithOptionalTenant = { name: "Test Document" };
     const result = ensureTenantContext(entity, "tenant-abc");
     
     expect(result.tenantId).toBe("tenant-abc");
@@ -352,14 +357,14 @@ describe("tenant context validation", () => {
   });
 
   it("should allow matching tenantId", () => {
-    const entity = { name: "Test", tenantId: "tenant-abc" };
+    const entity: EntityWithOptionalTenant = { name: "Test", tenantId: "tenant-abc" };
     const result = ensureTenantContext(entity, "tenant-abc");
     
     expect(result.tenantId).toBe("tenant-abc");
   });
 
   it("should reject mismatched tenantId (cross-tenant access)", () => {
-    const entity = { name: "Test", tenantId: "tenant-xyz" };
+    const entity: EntityWithOptionalTenant = { name: "Test", tenantId: "tenant-xyz" };
     
     expect(() => ensureTenantContext(entity, "tenant-abc"))
       .toThrow("Cross-tenant access denied");

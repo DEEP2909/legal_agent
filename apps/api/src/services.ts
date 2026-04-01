@@ -66,7 +66,6 @@ import {
   toBase64Url,
   verifyPassword
 } from "./security.js";
-import { cosineSimilarity } from "./vector.js";
 import { config } from "./config.js";
 import { withTransaction } from "./transaction.js";
 
@@ -1777,32 +1776,28 @@ export const legalWorkflowService = {
   async research(session: AuthSession, question: string): Promise<ResearchResponse> {
     const questionEmbedding = await embedTextWithOpenAI(question);
 
-    // Search across all document chunks for better coverage
-    const allChunks = await repository.getAllDocumentChunks(session.tenantId);
-    
-    const rankedChunks = allChunks
-      .map((chunk) => ({
-        chunk,
-        score: cosineSimilarity(questionEmbedding, chunk.embedding ?? [])
-      }))
-      .sort((left, right) => right.score - left.score)
-      .slice(0, 10); // Get top 10 chunks
+    // Use pgvector for efficient vector similarity search
+    const similarChunks = await repository.searchSimilarChunks(
+      session.tenantId,
+      questionEmbedding,
+      { limit: 10 }
+    );
 
     // Deduplicate by document ID, keeping highest-scoring chunk per document
     const seenDocuments = new Set<string>();
-    const topChunksByDocument = rankedChunks.filter((item) => {
-      if (seenDocuments.has(item.chunk.documentId)) {
+    const topChunksByDocument = similarChunks.filter((chunk) => {
+      if (seenDocuments.has(chunk.documentId)) {
         return false;
       }
-      seenDocuments.add(item.chunk.documentId);
+      seenDocuments.add(chunk.documentId);
       return true;
     }).slice(0, 5); // Keep top 5 unique documents
 
     const corpus = topChunksByDocument.map(
-      ({ chunk, score }) =>
-        `${chunk.sourceName} (semantic score ${score.toFixed(2)}): ${chunk.textContent}`
+      (chunk) =>
+        `${chunk.sourceName} (semantic score ${chunk.score.toFixed(2)}): ${chunk.textContent}`
     );
-    const sourceDocumentIds = topChunksByDocument.map(({ chunk }) => chunk.documentId);
+    const sourceDocumentIds = topChunksByDocument.map((chunk) => chunk.documentId);
 
     const prompt = buildResearchPrompt({ question, corpus });
     const result = await answerResearchWithOpenAI(prompt);

@@ -386,6 +386,74 @@ export const repository = {
     );
   },
 
+  // --- Refresh Token Methods ---
+  async createRefreshToken(
+    tenantId: string,
+    attorneyId: string,
+    tokenHash: string,
+    ttlDays: number
+  ): Promise<string> {
+    const id = randomUUID();
+    await pool.query(
+      `insert into refresh_tokens (id, tenant_id, attorney_id, token_hash, expires_at)
+       values ($1, $2, $3, $4, now() + interval '1 day' * $5)`,
+      [id, tenantId, attorneyId, tokenHash, ttlDays]
+    );
+    return id;
+  },
+
+  async validateAndRotateRefreshToken(
+    tokenHash: string
+  ): Promise<{ tenantId: string; attorneyId: string } | null> {
+    // Find valid, non-revoked, non-expired token
+    const result = await pool.query(
+      `select id, tenant_id, attorney_id
+       from refresh_tokens
+       where token_hash = $1
+         and revoked_at is null
+         and expires_at > now()
+       limit 1`,
+      [tokenHash]
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      return null;
+    }
+
+    // Revoke the used token (single use for security)
+    await pool.query(
+      `update refresh_tokens set revoked_at = now() where id = $1`,
+      [row.id]
+    );
+
+    return {
+      tenantId: String(row.tenant_id),
+      attorneyId: String(row.attorney_id)
+    };
+  },
+
+  async revokeRefreshToken(tokenHash: string): Promise<void> {
+    await pool.query(
+      `update refresh_tokens set revoked_at = now() where token_hash = $1`,
+      [tokenHash]
+    );
+  },
+
+  async revokeAllRefreshTokens(attorneyId: string): Promise<void> {
+    await pool.query(
+      `update refresh_tokens set revoked_at = now() where attorney_id = $1 and revoked_at is null`,
+      [attorneyId]
+    );
+  },
+
+  async cleanupExpiredRefreshTokens(): Promise<number> {
+    const result = await pool.query(
+      `delete from refresh_tokens where expires_at < now() or revoked_at < now() - interval '7 days'`
+    );
+    return result.rowCount ?? 0;
+  },
+
   async getTenantIds() {
     const result = await pool.query("select id from tenants order by created_at asc");
     return result.rows.map((row) => String(row.id));
@@ -1820,6 +1888,52 @@ export const repository = {
     return result.rows.map((row) => ({
       ...mapDocument(row),
       embedding: Array.isArray(row.embedding) ? row.embedding.map(Number) : []
+    }));
+  },
+
+  /**
+   * Vector similarity search using pgvector's <=> cosine distance operator.
+   * Returns the most similar document chunks to the query embedding.
+   */
+  async searchSimilarChunks(
+    tenantId: string,
+    queryEmbedding: number[],
+    options?: { limit?: number }
+  ): Promise<Array<{
+    id: string;
+    documentId: string;
+    chunkIndex: number;
+    textContent: string;
+    score: number;
+    sourceName: string;
+    docType: string;
+    matterId: string;
+  }>> {
+    const limit = Math.min(options?.limit ?? 10, 50);
+    // Cast JS array to pgvector literal: '[0.1,0.2,...]'
+    const vectorLiteral = `[${queryEmbedding.join(",")}]`;
+
+    const result = await pool.query(
+      `SELECT c.id, c.document_id, c.chunk_index, c.text_content,
+              1 - (c.embedding <=> $1::vector) AS score,
+              d.source_name, d.doc_type, d.matter_id
+       FROM document_chunks c
+       JOIN documents d ON d.id = c.document_id
+       WHERE c.tenant_id = $2 AND c.embedding IS NOT NULL
+       ORDER BY c.embedding <=> $1::vector
+       LIMIT $3`,
+      [vectorLiteral, tenantId, limit]
+    );
+
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      documentId: String(row.document_id),
+      chunkIndex: Number(row.chunk_index),
+      textContent: String(row.text_content),
+      score: Number(row.score),
+      sourceName: String(row.source_name),
+      docType: String(row.doc_type ?? ""),
+      matterId: String(row.matter_id ?? "")
     }));
   },
 

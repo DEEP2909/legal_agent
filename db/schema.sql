@@ -1,3 +1,9 @@
+-- Enable pgvector extension for vector similarity search
+-- Must be installed on the database: CREATE EXTENSION IF NOT EXISTS vector;
+-- For AWS RDS: run as superuser after provisioning
+-- For self-hosted: use pgvector/pgvector:pg16 Docker image
+create extension if not exists vector;
+
 create table if not exists tenants (
   id uuid primary key,
   name text not null,
@@ -78,7 +84,7 @@ create table if not exists document_chunks (
   chunk_index integer not null,
   text_content text not null,
   citation_json jsonb not null default '{}'::jsonb,
-  embedding double precision[],
+  embedding vector(3072),  -- 3072 dimensions for text-embedding-3-large
   created_at timestamptz not null default now()
 );
 
@@ -408,6 +414,12 @@ create index if not exists idx_research_queries_attorney on research_queries (at
 create index if not exists idx_document_chunks_document on document_chunks (document_id);
 create index if not exists idx_document_chunks_tenant on document_chunks (tenant_id, document_id);
 
+-- IVFFlat index for approximate nearest-neighbor vector search
+-- lists = sqrt(expected rows). Start with 100, tune based on corpus size.
+create index if not exists idx_document_chunks_embedding
+  on document_chunks using ivfflat (embedding vector_cosine_ops)
+  with (lists = 100);
+
 -- Playbooks table for tenant-specific risk assessment rules
 create table if not exists playbooks (
   id uuid primary key,
@@ -422,6 +434,21 @@ create table if not exists playbooks (
 );
 
 create index if not exists idx_playbooks_tenant on playbooks (tenant_id, is_active, created_at desc);
+
+-- Refresh tokens for JWT token rotation
+create table if not exists refresh_tokens (
+  id uuid primary key,
+  tenant_id uuid not null references tenants(id),
+  attorney_id uuid not null references attorneys(id),
+  token_hash text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz,
+  replaced_by uuid references refresh_tokens(id)
+);
+
+create index if not exists idx_refresh_tokens_hash on refresh_tokens (token_hash) where revoked_at is null;
+create index if not exists idx_refresh_tokens_attorney on refresh_tokens (attorney_id, created_at desc);
 
 -- Note: All columns below are already defined in their respective CREATE TABLE statements above.
 -- These ALTER TABLE statements were kept as migration-safe idempotent stubs during the initial

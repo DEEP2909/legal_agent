@@ -12,7 +12,18 @@ if (!config.databaseUrl) {
 }
 
 export const pool = new Pool({
-  connectionString: config.databaseUrl
+  connectionString: config.databaseUrl,
+  max: config.dbPoolMax,
+  idleTimeoutMillis: config.dbIdleTimeoutMs,
+  connectionTimeoutMillis: config.dbConnectTimeoutMs,
+  ssl: config.nodeEnv === "production"
+    ? { rejectUnauthorized: true }   // enforce TLS to RDS in production
+    : false
+});
+
+// Log pool-level errors (e.g. idle client disconnected by DB) without crashing
+pool.on("error", (err) => {
+  console.error("[pg pool] Unexpected idle client error:", err.message);
 });
 
 async function seedDatabase() {
@@ -173,7 +184,18 @@ async function seedDatabase() {
 export async function initializeDatabase() {
   const schema = await readFile(schemaPath, "utf8");
   await pool.query(schema);
-  await seedDatabase();
+  
+  // Only seed demo data when explicitly requested
+  if (config.seedDemoData) {
+    if (config.nodeEnv === "production") {
+      console.warn(
+        "[database] SEED_DEMO_DATA=true in production — skipping demo seed for safety. " +
+        "Set SEED_DEMO_DATA=true only in development."
+      );
+      return;
+    }
+    await seedDatabase();
+  }
 }
 
 export async function checkDatabaseConnection() {

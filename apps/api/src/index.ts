@@ -1,3 +1,6 @@
+// OpenTelemetry must be initialized before any other imports
+import "./tracing.js";
+
 import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";

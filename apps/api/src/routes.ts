@@ -117,6 +117,29 @@ export async function registerRoutes(app: FastifyInstance) {
         path: "/",
         maxAge: 8 * 60 * 60 // 8 hours in seconds
       });
+      
+      // Issue refresh token for session persistence
+      if (result.session) {
+        const { createRefreshToken, getRefreshTokenTTLDays } = await import("./auth.js");
+        const { hashApiKey: hashToken } = await import("./security.js");
+        const refreshToken = createRefreshToken();
+        
+        reply.setCookie("refreshToken", refreshToken, {
+          httpOnly: true,
+          secure: isProduction,
+          sameSite: "strict",
+          path: "/auth/refresh",
+          maxAge: getRefreshTokenTTLDays() * 24 * 60 * 60
+        });
+        
+        // Store refresh token hash in database
+        await repository.createRefreshToken(
+          result.session.tenantId,
+          result.session.attorneyId,
+          hashToken(refreshToken),
+          getRefreshTokenTTLDays()
+        );
+      }
     }
     
     return result;
@@ -548,20 +571,76 @@ export async function registerRoutes(app: FastifyInstance) {
     });
   });
 
+  // Token refresh endpoint - uses refresh cookie, not access token
+  app.post("/auth/refresh", authRateLimit, async (request, reply) => {
+    const raw = request.cookies.refreshToken;
+    if (!raw) {
+      return reply.code(401).send({ error: "No refresh token" });
+    }
+
+    const { hashApiKey: hashToken } = await import("./security.js");
+    const tokenHash = hashToken(raw);
+    const session = await repository.validateAndRotateRefreshToken(tokenHash);
+    
+    if (!session) {
+      // Clear invalid refresh cookie
+      reply.clearCookie("refreshToken", {
+        httpOnly: true,
+        secure: config.nodeEnv === "production",
+        sameSite: "strict",
+        path: "/auth/refresh"
+      });
+      return reply.code(401).send({ error: "Invalid or expired refresh token" });
+    }
+
+    // Get full session data
+    const fullSession = await repository.getAttorneySession(session.attorneyId);
+    if (!fullSession) {
+      return reply.code(401).send({ error: "Session no longer valid" });
+    }
+
+    // Issue new tokens
+    const { issueTokens, getRefreshTokenTTLDays } = await import("./auth.js");
+    const { refreshToken: newRefreshToken } = issueTokens(reply, fullSession);
+    
+    // Store new refresh token
+    await repository.createRefreshToken(
+      session.tenantId,
+      session.attorneyId,
+      hashToken(newRefreshToken),
+      getRefreshTokenTTLDays()
+    );
+
+    return { ok: true };
+  });
+
   app.register(async (protectedApp) => {
     protectedApp.addHook("preHandler", requireAuth);
 
     protectedApp.get("/auth/me", async (request) => legalWorkflowService.me(request.authSession));
 
-    // Logout endpoint - clears httpOnly cookie
+    // Logout endpoint - clears httpOnly cookie and revokes refresh tokens
     protectedApp.post("/auth/logout", async (request, reply) => {
       const isProduction = config.nodeEnv === "production";
+      
+      // Clear access token cookie
       reply.clearCookie("accessToken", {
         httpOnly: true,
         secure: isProduction,
         sameSite: "strict",
         path: "/"
       });
+      
+      // Clear refresh token cookie
+      reply.clearCookie("refreshToken", {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: "strict",
+        path: "/auth/refresh"
+      });
+      
+      // Revoke all refresh tokens for this user
+      await repository.revokeAllRefreshTokens(request.authSession.attorneyId);
       
       await repository.recordAuditEvent({
         id: randomUUID(),

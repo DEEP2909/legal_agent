@@ -28,11 +28,11 @@ This application is designed to run as three deployable services:
 
 ## Container images
 
-The repo includes:
+The repo includes three Dockerfiles at the project root:
 
-- [Dockerfile.web](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/Dockerfile.web)
-- [Dockerfile.api](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/Dockerfile.api)
-- [Dockerfile.worker](C:/Users/deeps/OneDrive/Documents/New%20project/Legal%20Agent/Dockerfile.worker)
+- `Dockerfile.web`
+- `Dockerfile.api`
+- `Dockerfile.worker`
 
 Build examples:
 

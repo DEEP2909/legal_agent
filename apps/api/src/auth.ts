@@ -1,6 +1,7 @@
 import type { AuthSession } from "@legal-agent/shared";
 import jwt from "jsonwebtoken";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { randomBytes } from "node:crypto";
 import { config } from "./config.js";
 import { repository } from "./repository.js";
 import { hashApiKey } from "./security.js";
@@ -20,6 +21,8 @@ declare module "fastify" {
   }
 }
 
+const REFRESH_TOKEN_TTL_DAYS = 30;
+
 export function createAccessToken(session: AuthSession) {
   const options: jwt.SignOptions = {
     subject: session.attorneyId,
@@ -36,6 +39,40 @@ export function createAccessToken(session: AuthSession) {
     config.jwtSecret,
     options
   );
+}
+
+export function createRefreshToken(): string {
+  return `rt_${randomBytes(32).toString("hex")}`;
+}
+
+export function issueTokens(
+  reply: FastifyReply,
+  session: AuthSession
+): { accessToken: string; refreshToken: string } {
+  const accessToken = createAccessToken(session);
+  const refreshToken = createRefreshToken();
+
+  reply.setCookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: config.nodeEnv === "production",
+    sameSite: "strict",
+    path: "/",
+    maxAge: 2 * 60 * 60, // 2 hours in seconds
+  });
+
+  reply.setCookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: config.nodeEnv === "production",
+    sameSite: "strict",
+    path: "/auth/refresh", // scope to refresh endpoint only
+    maxAge: REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60, // 30 days in seconds
+  });
+
+  return { accessToken, refreshToken };
+}
+
+export function getRefreshTokenTTLDays(): number {
+  return REFRESH_TOKEN_TTL_DAYS;
 }
 
 async function authenticateBearerToken(token: string) {

@@ -12,6 +12,7 @@ import { moveStoredObject, readStoredObject } from "./storage.js";
  * (SELECT FOR UPDATE SKIP LOCKED in claimWorkflowJobs) prevents duplicate processing.
  */
 let isRunning = false;
+let shouldStop = false;
 const workerId = `worker-${randomUUID()}`;
 
 // Job timeout in milliseconds (10 minutes)
@@ -91,7 +92,7 @@ async function recoverStuckJobs() {
 }
 
 export async function processPendingDocuments() {
-  if (isRunning) {
+  if (isRunning || shouldStop) {
     return;
   }
 
@@ -224,4 +225,30 @@ export function startWorker() {
     void processPendingDocuments();
   }, config.jobPollIntervalMs);
   void processPendingDocuments();
+}
+
+/**
+ * Gracefully stop the worker, allowing in-flight jobs to complete.
+ * Returns a promise that resolves when the worker has stopped.
+ */
+export function stopWorker(): Promise<void> {
+  shouldStop = true;
+  console.log("[worker] Stopping worker, waiting for in-flight jobs...");
+  
+  return new Promise<void>((resolve) => {
+    const check = setInterval(() => {
+      if (!isRunning) {
+        clearInterval(check);
+        console.log("[worker] Worker stopped cleanly.");
+        resolve();
+      }
+    }, 500);
+    
+    // Force resolve after 30 seconds even if job is still running
+    setTimeout(() => {
+      clearInterval(check);
+      console.log("[worker] Worker shutdown timeout, forcing exit.");
+      resolve();
+    }, 30_000);
+  });
 }
