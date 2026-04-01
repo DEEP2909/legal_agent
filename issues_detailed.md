@@ -14,7 +14,7 @@
 | 4 | 🔴 Critical | ✅ | `services.ts`, `repository.ts` | `approved`/`rejected` review actions do nothing |
 | 5 | 🟠 Major | ✅ | `repository.ts` | Vector search fetches all embeddings into memory |
 | 6 | 🟠 Major | ✅ | `services.ts`, `worker.ts` | Text truncation too aggressive |
-| 7 | 🟠 Major | ❌ | `services.ts` | Hardcoded default playbook — no tenant config |
+| 7 | 🟠 Major | ✅ | `services.ts`, `routes.ts` | Playbooks table + admin endpoints for tenant config |
 | 8 | 🟠 Major | ✅ | `repository.ts` | Worker retries with exponential backoff |
 | 9 | 🟠 Major | ✅ | `ocr.ts` | `pdf-parse` replaced with `unpdf` |
 | 10 | 🟠 Major | ✅ | `repository.ts` | `mapAttorney()` silently drops `isActive` and `lastLoginAt` |
@@ -97,59 +97,35 @@ Three truncations were fixed:
 
 ---
 
-### Issue #7 — Hardcoded default playbook — no tenant configuration
-**Status: ❌ Not Fixed**
-**File:** `apps/api/src/services.ts`
+### Issue #7 — Tenant-configurable playbooks
+**Status: ✅ Fixed**
+**Files:** `db/schema.sql`, `apps/api/src/repository.ts`, `apps/api/src/services.ts`, `apps/api/src/routes.ts`
 
-**The Problem:**
+**The Fix:**
 
-Five rules are hardcoded at the top of `services.ts`. If a firm sends an empty `playbook: []` array in the request body, the system silently falls back to these generic rules with no way to configure firm-specific ones from the admin console.
+1. Added `playbooks` table to `db/schema.sql` with columns: id, tenant_id, name, description, rules (jsonb), is_active, created_by, created_at, updated_at
 
-```ts
-// services.ts lines 71–77
-const defaultPlaybook = [
-  "Indemnity cap must not exceed 20% of purchase price.",
-  "Governing law must be Indian law for domestic deals.",
-  "Counterparty assignment requires prior written consent.",
-  "Confidentiality clauses must survive termination for at least 3 years.",
-  "Dispute resolution should prefer arbitration seated in Mumbai."
-];
+2. Added repository methods:
+   - `getActivePlaybook(tenantId)` — returns the tenant's active playbook rules
+   - `getPlaybooks(tenantId)` — lists all playbooks for a tenant
+   - `getPlaybookById(id, tenantId)` — gets a specific playbook
+   - `createPlaybook()` — creates a new playbook (auto-deactivates others if setting as active)
+   - `updatePlaybook()` — updates playbook name/description/rules/active status
+   - `deletePlaybook()` — removes a playbook
 
-// services.ts line 1706 — used as silent fallback
-const prompt = buildRiskPrompt({
-  clauseText: input.clauseText,
-  playbook: input.playbook.length ? input.playbook : defaultPlaybook  // ← always falls back
-});
-```
+3. Updated `assessRisk()` in `services.ts` to:
+   - Use request-provided rules if present
+   - Otherwise load tenant's active playbook from DB
+   - Fall back to `defaultPlaybook` only if no tenant playbook exists
 
-There is no `playbooks` table in the schema, no admin endpoint to manage playbooks, and no way for a firm to save their own rules persistently.
+4. Added admin endpoints:
+   - `GET /api/admin/playbooks` — list all tenant playbooks
+   - `GET /api/admin/playbooks/:id` — get specific playbook
+   - `POST /api/admin/playbooks` — create new playbook
+   - `PATCH /api/admin/playbooks/:id` — update playbook
+   - `DELETE /api/admin/playbooks/:id` — delete playbook
 
-**How to Fix:**
-
-1. Add a `playbooks` table to `db/schema.sql`:
-```sql
-create table if not exists playbooks (
-  id uuid primary key,
-  tenant_id uuid not null references tenants(id),
-  name text not null,
-  rules jsonb not null default '[]'::jsonb,
-  is_active boolean not null default true,
-  created_at timestamptz not null default now()
-);
-```
-
-2. Add repository methods `getActivePlaybook(tenantId)`, `createPlaybook()`, `updatePlaybook()`.
-
-3. In `assessRisk()` in `services.ts`, if no playbook is supplied in the request, load the tenant's active one from DB:
-```ts
-const activePlaybook = input.playbook.length
-  ? input.playbook
-  : (await repository.getActivePlaybook(session.tenantId))?.rules ?? defaultPlaybook;
-```
-
-4. Add admin endpoints `GET /api/admin/playbooks` and `POST /api/admin/playbooks` to let tenant admins manage their rules.
-
-5. Keep the 5-item `defaultPlaybook` only as a last-resort fallback when a tenant has no saved playbook at all.
+5. Added `PlaybookRecord` type to shared package
 
 ---
 
@@ -366,15 +342,11 @@ Then in `dashboard-app.tsx`, catch and handle by status code:
 
 ## Status Summary
 
-**22 of 23 issues have been fixed!** ✅
+**🎉 All 23 issues have been fixed!** ✅
 
-The only remaining issue is:
+The Legal Agent platform has been thoroughly reviewed and all identified issues have been addressed:
 
-### Issue #7 — Hardcoded default playbook — no tenant configuration
-This is a larger feature requiring:
-- New `playbooks` table in `db/schema.sql`
-- Repository methods: `getActivePlaybook()`, `createPlaybook()`, `updatePlaybook()`
-- Service updates to `assessRisk()` to load tenant playbook from DB
-- Admin endpoints: `GET/POST /api/admin/playbooks`
-
-This was intentionally deferred as it's a significant product feature rather than a bug fix.
+- **4 Critical issues** — All fixed (XSS, rate limiting, validation, review actions)
+- **6 Major issues** — All fixed (vector search, truncation, playbooks, backoff, pdf-parse, mapping)
+- **8 Moderate issues** — All fixed (tenant ID, logout, chunking, DB columns, research history, paths, password reset, tests)
+- **5 Minor issues** — All fixed (dead code, filters, password validation, env placeholders, API errors)

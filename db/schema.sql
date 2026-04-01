@@ -406,6 +406,21 @@ create index if not exists idx_saml_request_cache_expires on saml_request_cache 
 create index if not exists idx_research_queries_tenant on research_queries (tenant_id, created_at desc);
 create index if not exists idx_research_queries_attorney on research_queries (attorney_id, created_at desc);
 
+-- Playbooks table for tenant-specific risk assessment rules
+create table if not exists playbooks (
+  id uuid primary key,
+  tenant_id uuid not null references tenants(id),
+  name text not null,
+  description text,
+  rules jsonb not null default '[]'::jsonb,
+  is_active boolean not null default false,
+  created_by uuid references attorneys(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_playbooks_tenant on playbooks (tenant_id, is_active, created_at desc);
+
 -- Note: All columns below are already defined in their respective CREATE TABLE statements above.
 -- These ALTER TABLE statements were kept as migration-safe idempotent stubs during the initial
 -- MVP development phase. They have been removed to reduce startup overhead.

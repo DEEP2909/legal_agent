@@ -804,6 +804,142 @@ export async function registerRoutes(app: FastifyInstance) {
       }
     );
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Playbook Management Routes
+    // ──────────────────────────────────────────────────────────────────────────
+
+    protectedApp.get(
+      "/api/admin/playbooks",
+      { preHandler: requireTenantAdmin },
+      async (request) => {
+        return repository.getPlaybooks(request.authSession.tenantId);
+      }
+    );
+
+    protectedApp.get(
+      "/api/admin/playbooks/:id",
+      { preHandler: requireTenantAdmin },
+      async (request, reply) => {
+        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+        const playbook = await repository.getPlaybookById(id, request.authSession.tenantId);
+        if (!playbook) {
+          reply.code(404);
+          return { error: "Playbook not found" };
+        }
+        return playbook;
+      }
+    );
+
+    protectedApp.post(
+      "/api/admin/playbooks",
+      { preHandler: requireTenantAdmin },
+      async (request, reply) => {
+        const body = z.object({
+          name: z.string().min(2, "Name must be at least 2 characters"),
+          description: z.string().optional(),
+          rules: z.array(z.string().min(5, "Each rule must be at least 5 characters"))
+            .min(1, "At least one rule is required")
+            .max(50, "Maximum 50 rules allowed"),
+          isActive: z.boolean().default(false)
+        }).parse(request.body);
+
+        const id = randomUUID();
+        await repository.createPlaybook({
+          id,
+          tenantId: request.authSession.tenantId,
+          name: body.name,
+          description: body.description,
+          rules: body.rules,
+          isActive: body.isActive,
+          createdBy: request.authSession.attorneyId
+        });
+
+        await repository.recordAuditEvent({
+          id: randomUUID(),
+          tenantId: request.authSession.tenantId,
+          actorAttorneyId: request.authSession.attorneyId,
+          eventType: "playbook.created",
+          objectType: "playbook",
+          objectId: id,
+          metadata: { name: body.name, ruleCount: body.rules.length, isActive: body.isActive }
+        });
+
+        reply.code(201);
+        return repository.getPlaybookById(id, request.authSession.tenantId);
+      }
+    );
+
+    protectedApp.patch(
+      "/api/admin/playbooks/:id",
+      { preHandler: requireTenantAdmin },
+      async (request, reply) => {
+        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+        const body = z.object({
+          name: z.string().min(2).optional(),
+          description: z.string().optional(),
+          rules: z.array(z.string().min(5))
+            .min(1)
+            .max(50)
+            .optional(),
+          isActive: z.boolean().optional()
+        }).parse(request.body);
+
+        const existing = await repository.getPlaybookById(id, request.authSession.tenantId);
+        if (!existing) {
+          reply.code(404);
+          return { error: "Playbook not found" };
+        }
+
+        const updated = await repository.updatePlaybook({
+          id,
+          tenantId: request.authSession.tenantId,
+          ...body
+        });
+
+        if (updated) {
+          await repository.recordAuditEvent({
+            id: randomUUID(),
+            tenantId: request.authSession.tenantId,
+            actorAttorneyId: request.authSession.attorneyId,
+            eventType: "playbook.updated",
+            objectType: "playbook",
+            objectId: id,
+            metadata: { changes: Object.keys(body) }
+          });
+        }
+
+        return repository.getPlaybookById(id, request.authSession.tenantId);
+      }
+    );
+
+    protectedApp.delete(
+      "/api/admin/playbooks/:id",
+      { preHandler: requireTenantAdmin },
+      async (request, reply) => {
+        const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+
+        const existing = await repository.getPlaybookById(id, request.authSession.tenantId);
+        if (!existing) {
+          reply.code(404);
+          return { error: "Playbook not found" };
+        }
+
+        await repository.deletePlaybook(id, request.authSession.tenantId);
+
+        await repository.recordAuditEvent({
+          id: randomUUID(),
+          tenantId: request.authSession.tenantId,
+          actorAttorneyId: request.authSession.attorneyId,
+          eventType: "playbook.deleted",
+          objectType: "playbook",
+          objectId: id,
+          metadata: { name: existing.name }
+        });
+
+        return { success: true };
+      }
+    );
+
     protectedApp.post(
       "/api/documents/ingest",
       { preHandler: requireRole(["partner", "associate", "paralegal", "admin"]) },

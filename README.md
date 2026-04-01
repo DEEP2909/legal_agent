@@ -257,6 +257,11 @@ Browser login for the seeded tenant admin:
 - `POST /api/admin/scim/tokens`
 - `POST /api/admin/invitations`
 - `PUT /api/admin/sso-providers`
+- `GET /api/admin/playbooks` — List all playbooks for tenant
+- `GET /api/admin/playbooks/:id` — Get specific playbook
+- `POST /api/admin/playbooks` — Create new playbook with rules
+- `PATCH /api/admin/playbooks/:id` — Update playbook name/rules/active status
+- `DELETE /api/admin/playbooks/:id` — Delete playbook
 - `GET /scim/v2/ServiceProviderConfig`
 - `GET /scim/v2/ResourceTypes`
 - `GET /scim/v2/Schemas`

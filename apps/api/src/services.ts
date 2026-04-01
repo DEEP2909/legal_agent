@@ -1718,9 +1718,21 @@ export const legalWorkflowService = {
       throw new Error("Document not found for tenant.");
     }
 
+    // Determine which playbook rules to use:
+    // 1. If rules provided in request, use those
+    // 2. Otherwise, load tenant's active playbook from DB
+    // 3. Fall back to default playbook if no tenant playbook exists
+    let playbookRules: string[];
+    if (input.playbook.length > 0) {
+      playbookRules = input.playbook;
+    } else {
+      const tenantPlaybook = await repository.getActivePlaybook(session.tenantId);
+      playbookRules = tenantPlaybook?.rules ?? defaultPlaybook;
+    }
+
     const prompt = buildRiskPrompt({
       clauseText: input.clauseText,
-      playbook: input.playbook.length ? input.playbook : defaultPlaybook
+      playbook: playbookRules
     });
     const result = await assessRiskWithOpenAI(prompt);
 

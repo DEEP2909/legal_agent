@@ -81,6 +81,18 @@ export interface FlagRecord {
   status: "open" | "resolved";
 }
 
+export interface PlaybookRecord {
+  id: string;
+  tenantId: string;
+  name: string;
+  description?: string;
+  rules: string[];
+  isActive: boolean;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface DashboardSnapshot {
   tenant?: Tenant;
   matters: Matter[];

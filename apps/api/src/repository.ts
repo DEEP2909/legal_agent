@@ -2029,5 +2029,186 @@ export const repository = {
         JSON.stringify(input.metadata ?? {})
       ]
     );
+  },
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Playbook Management
+  // ──────────────────────────────────────────────────────────────────────────
+
+  async getActivePlaybook(tenantId: string): Promise<{ id: string; name: string; rules: string[] } | null> {
+    const result = await pool.query(
+      `select id, name, rules from playbooks
+       where tenant_id = $1 and is_active = true
+       order by updated_at desc
+       limit 1`,
+      [tenantId]
+    );
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+    
+    const row = result.rows[0];
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      rules: Array.isArray(row.rules) ? row.rules : []
+    };
+  },
+
+  async getPlaybooks(tenantId: string): Promise<Array<{
+    id: string;
+    name: string;
+    description?: string;
+    rules: string[];
+    isActive: boolean;
+    createdBy?: string;
+    createdAt: string;
+    updatedAt: string;
+  }>> {
+    const result = await pool.query(
+      `select id, name, description, rules, is_active, created_by, created_at, updated_at
+       from playbooks
+       where tenant_id = $1
+       order by is_active desc, updated_at desc`,
+      [tenantId]
+    );
+    
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      description: row.description ? String(row.description) : undefined,
+      rules: Array.isArray(row.rules) ? row.rules : [],
+      isActive: Boolean(row.is_active),
+      createdBy: row.created_by ? String(row.created_by) : undefined,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    }));
+  },
+
+  async getPlaybookById(playbookId: string, tenantId: string): Promise<{
+    id: string;
+    name: string;
+    description?: string;
+    rules: string[];
+    isActive: boolean;
+    createdBy?: string;
+    createdAt: string;
+    updatedAt: string;
+  } | null> {
+    const result = await pool.query(
+      `select id, name, description, rules, is_active, created_by, created_at, updated_at
+       from playbooks
+       where id = $1 and tenant_id = $2`,
+      [playbookId, tenantId]
+    );
+    
+    if (result.rows.length === 0) {
+      return null;
+    }
+    
+    const row = result.rows[0];
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      description: row.description ? String(row.description) : undefined,
+      rules: Array.isArray(row.rules) ? row.rules : [],
+      isActive: Boolean(row.is_active),
+      createdBy: row.created_by ? String(row.created_by) : undefined,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
+  },
+
+  async createPlaybook(input: {
+    id: string;
+    tenantId: string;
+    name: string;
+    description?: string;
+    rules: string[];
+    isActive: boolean;
+    createdBy: string;
+  }): Promise<void> {
+    // If this playbook is being set as active, deactivate all others first
+    if (input.isActive) {
+      await pool.query(
+        `update playbooks set is_active = false, updated_at = now() where tenant_id = $1 and is_active = true`,
+        [input.tenantId]
+      );
+    }
+    
+    await pool.query(
+      `insert into playbooks (id, tenant_id, name, description, rules, is_active, created_by)
+       values ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
+      [
+        input.id,
+        input.tenantId,
+        input.name,
+        input.description ?? null,
+        JSON.stringify(input.rules),
+        input.isActive,
+        input.createdBy
+      ]
+    );
+  },
+
+  async updatePlaybook(input: {
+    id: string;
+    tenantId: string;
+    name?: string;
+    description?: string;
+    rules?: string[];
+    isActive?: boolean;
+  }): Promise<boolean> {
+    const updates: string[] = [];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (input.name !== undefined) {
+      updates.push(`name = $${paramIndex++}`);
+      params.push(input.name);
+    }
+    if (input.description !== undefined) {
+      updates.push(`description = $${paramIndex++}`);
+      params.push(input.description);
+    }
+    if (input.rules !== undefined) {
+      updates.push(`rules = $${paramIndex++}::jsonb`);
+      params.push(JSON.stringify(input.rules));
+    }
+    if (input.isActive !== undefined) {
+      // If setting this playbook as active, deactivate all others first
+      if (input.isActive) {
+        await pool.query(
+          `update playbooks set is_active = false, updated_at = now() where tenant_id = $1 and is_active = true and id != $2`,
+          [input.tenantId, input.id]
+        );
+      }
+      updates.push(`is_active = $${paramIndex++}`);
+      params.push(input.isActive);
+    }
+
+    if (updates.length === 0) {
+      return false;
+    }
+
+    updates.push(`updated_at = now()`);
+    params.push(input.id);
+    params.push(input.tenantId);
+
+    const result = await pool.query(
+      `update playbooks set ${updates.join(", ")} where id = $${paramIndex++} and tenant_id = $${paramIndex}`,
+      params
+    );
+
+    return (result.rowCount ?? 0) > 0;
+  },
+
+  async deletePlaybook(playbookId: string, tenantId: string): Promise<boolean> {
+    const result = await pool.query(
+      `delete from playbooks where id = $1 and tenant_id = $2`,
+      [playbookId, tenantId]
+    );
+    return (result.rowCount ?? 0) > 0;
   }
 };
