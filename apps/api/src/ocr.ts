@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import pdfParse from "pdf-parse";
+import { extractText } from "unpdf";
 import { config } from "./config.js";
 import { readStoredObject } from "./storage.js";
 
@@ -133,9 +133,9 @@ export async function extractTextForIngestion(storagePath: string, mimeType: str
   }
 
   if (mimeType === "application/pdf") {
-    const parsed = await pdfParse(buffer);
-    if (parsed.text.trim()) {
-      return parsed.text;
+    const { text, totalPages } = await extractText(new Uint8Array(buffer), { mergePages: true });
+    if (text.trim()) {
+      return text;
     }
 
     // Scanned PDF — fall back to OCR provider
@@ -153,7 +153,6 @@ export async function extractTextForIngestion(storagePath: string, mimeType: str
     return runVisionOcr(buffer, mimeType);
   }
 
-  // TODO: Consider replacing pdf-parse (unmaintained) with pdf2json or unpdf
   throw new Error(
     `No OCR extractor is configured for mime type ${mimeType}. Provide normalizedText directly or upload a digital PDF/image.`
   );
