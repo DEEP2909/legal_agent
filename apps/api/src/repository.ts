@@ -1868,7 +1868,7 @@ export const repository = {
 
   // TODO: Issue #10 — When pgvector extension is available, replace this with a
   // proper vector similarity search using the <=> operator:
-  //   SELECT d.*, c.embedding <=> $2::vector AS distance
+  //   SELECT d.*, c.embedding <=> $2::halfvec AS distance
   //   FROM documents d JOIN document_chunks c ON ...
   //   WHERE d.tenant_id = $1
   //   ORDER BY distance ASC LIMIT 20
@@ -1915,12 +1915,12 @@ export const repository = {
 
     const result = await pool.query(
       `SELECT c.id, c.document_id, c.chunk_index, c.text_content,
-              1 - (c.embedding <=> $1::vector) AS score,
+              1 - (c.embedding <=> $1::halfvec) AS score,
               d.source_name, d.doc_type, d.matter_id
        FROM document_chunks c
        JOIN documents d ON d.id = c.document_id
        WHERE c.tenant_id = $2 AND c.embedding IS NOT NULL
-       ORDER BY c.embedding <=> $1::vector
+       ORDER BY c.embedding <=> $1::halfvec
        LIMIT $3`,
       [vectorLiteral, tenantId, limit]
     );

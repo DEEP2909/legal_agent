@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS document_chunks (
   chunk_index integer NOT NULL,
   text_content text NOT NULL,
   citation_json jsonb NOT NULL DEFAULT '{}'::jsonb,
-  embedding vector(3072),
+  embedding halfvec(3072),
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -470,8 +470,9 @@ CREATE INDEX IF NOT EXISTS idx_playbooks_tenant ON playbooks (tenant_id, is_acti
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens (token_hash) WHERE revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_attorney ON refresh_tokens (attorney_id, created_at DESC);
 
--- HNSW index for vector similarity search (supports dimensions > 2000, unlike IVFFlat)
--- HNSW is better for high-dimensional vectors like text-embedding-3-large (3072 dims)
+-- HNSW index for vector similarity search.
+-- halfvec required: both HNSW and IVFFlat cap at 2000 dims for the standard vector type.
+-- halfvec supports up to 16000 dims and is available in pgvector >= 0.7.0.
 CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding 
-  ON document_chunks USING hnsw (embedding vector_cosine_ops)
+  ON document_chunks USING hnsw (embedding halfvec_cosine_ops)
   WITH (m = 16, ef_construction = 64);

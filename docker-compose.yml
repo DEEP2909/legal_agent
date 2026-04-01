@@ -1,8 +1,8 @@
 
 services:
   postgres:
-    # pgvector 0.8.2 required for >2000 dimension vectors (text-embedding-3-large uses 3072)
-    image: pgvector/pgvector:0.8.2-pg16-bookworm
+    # pgvector 0.8.0 required for halfvec type (>2000 dimension vectors)
+    image: pgvector/pgvector:0.8.0-pg16
     environment:
       POSTGRES_DB: legal_agent
       POSTGRES_USER: postgres

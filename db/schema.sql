@@ -84,7 +84,7 @@ create table if not exists document_chunks (
   chunk_index integer not null,
   text_content text not null,
   citation_json jsonb not null default '{}'::jsonb,
-  embedding vector(3072),  -- 3072 dimensions for text-embedding-3-large
+  embedding halfvec(3072),  -- halfvec required for >2000 dims (text-embedding-3-large = 3072)
   created_at timestamptz not null default now()
 );
 
@@ -414,11 +414,9 @@ create index if not exists idx_research_queries_attorney on research_queries (at
 create index if not exists idx_document_chunks_document on document_chunks (document_id);
 create index if not exists idx_document_chunks_tenant on document_chunks (tenant_id, document_id);
 
--- HNSW index for vector similarity search (supports dimensions > 2000, unlike IVFFlat)
--- text-embedding-3-large uses 3072 dimensions, which exceeds IVFFlat's 2000 limit
--- m=16: connections per node, ef_construction=64: build-time accuracy/speed tradeoff
+-- HNSW index — requires halfvec for dimensions > 2000 (pgvector >= 0.7.0)
 create index if not exists idx_document_chunks_embedding
-  on document_chunks using hnsw (embedding vector_cosine_ops)
+  on document_chunks using hnsw (embedding halfvec_cosine_ops)
   with (m = 16, ef_construction = 64);
 
 -- Playbooks table for tenant-specific risk assessment rules

@@ -37,8 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        # pgvector 0.8.2 required for >2000 dimension vectors (text-embedding-3-large uses 3072)
-        image: pgvector/pgvector:0.8.2-pg16-bookworm
+        # pgvector 0.8.0 required for halfvec type (>2000 dimension vectors)
+        image: pgvector/pgvector:0.8.0-pg16
         env:
           POSTGRES_DB: legal_agent_test
           POSTGRES_USER: postgres
@@ -71,8 +71,8 @@ jobs:
       - run: npm run build -w @legal-agent/shared
       - name: Run database migrations
         run: npm run migrate -w @legal-agent/api
-      - run: npm run test -w @legal-agent/api
-        continue-on-error: true
+      - name: Run tests
+        run: npm run test -w @legal-agent/api
 
   docker-build:
     runs-on: ubuntu-latest
