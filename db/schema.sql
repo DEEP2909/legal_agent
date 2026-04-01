@@ -405,6 +405,8 @@ create index if not exists idx_scim_group_members_attorney on scim_group_members
 create index if not exists idx_saml_request_cache_expires on saml_request_cache (expires_at);
 create index if not exists idx_research_queries_tenant on research_queries (tenant_id, created_at desc);
 create index if not exists idx_research_queries_attorney on research_queries (attorney_id, created_at desc);
+create index if not exists idx_document_chunks_document on document_chunks (document_id);
+create index if not exists idx_document_chunks_tenant on document_chunks (tenant_id, document_id);
 
 -- Playbooks table for tenant-specific risk assessment rules
 create table if not exists playbooks (

@@ -20,7 +20,9 @@ export function mapAttorney(row: Record<string, unknown>): Attorney {
     role: row.role as Attorney["role"],
     practiceArea: String(row.practice_area ?? ""),
     isTenantAdmin: Boolean(row.is_tenant_admin),
-    canLogin: Boolean(row.can_login)
+    canLogin: Boolean(row.can_login),
+    isActive: Boolean(row.is_active),
+    lastLoginAt: row.last_login_at ? new Date(String(row.last_login_at)).toISOString() : undefined
   };
 }
 

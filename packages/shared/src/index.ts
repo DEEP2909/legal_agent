@@ -13,6 +13,8 @@ export interface Attorney {
   isTenantAdmin?: boolean;
   canLogin?: boolean;
   mustResetPassword?: boolean;
+  isActive?: boolean;
+  lastLoginAt?: string;
 }
 
 export interface Tenant {
@@ -78,7 +80,7 @@ export interface FlagRecord {
   severity: Severity;
   reason: string;
   confidence: number;
-  status: "open" | "resolved";
+  status: "open" | "resolved" | "approved" | "rejected";
 }
 
 export interface PlaybookRecord {

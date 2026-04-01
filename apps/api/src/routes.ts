@@ -680,7 +680,7 @@ export async function registerRoutes(app: FastifyInstance) {
           fullName: z.string().min(2).max(200),
           role: z.enum(["partner", "associate", "paralegal", "admin"]),
           practiceArea: z.string().min(2).max(100),
-          password: z.string().min(12).max(128),
+          password: passwordSchema,
           isTenantAdmin: z.boolean().default(false)
         })
         .parse(request.body);
