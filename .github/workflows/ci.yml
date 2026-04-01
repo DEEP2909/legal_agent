@@ -68,6 +68,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build -w @legal-agent/shared
+      - name: Run database migrations
+        run: npm run migrate -w @legal-agent/api
       - run: npm run test -w @legal-agent/api
         continue-on-error: true
 

@@ -127,23 +127,57 @@ Use these endpoints for load balancers and service monitors:
 
 The readiness endpoint checks database connectivity and storage availability.
 
+## Database migrations
+
+This project uses [node-pg-migrate](https://github.com/salsita/node-pg-migrate) for database schema management. Migrations must be run **before** starting the API or worker services.
+
+### Running migrations
+
+```bash
+# From the repo root, run migrations against your database
+DATABASE_URL=<your_database_url> npm run migrate -w @legal-agent/api
+
+# To rollback the last migration
+DATABASE_URL=<your_database_url> npm run migrate:down -w @legal-agent/api
+
+# To create a new migration
+npm run migrate:create -w @legal-agent/api -- <migration-name>
+```
+
+### Migration files
+
+Migrations are located in `db/migrations/` and follow the format `YYYYMMDDHHMMSS_description.js`. The initial schema migration (`20260101000000_initial-schema.js`) creates all core tables.
+
+### CI/CD integration
+
+In your deployment pipeline, run migrations as a separate step before deploying the API:
+
+```yaml
+# Example GitHub Actions step
+- name: Run database migrations
+  env:
+    DATABASE_URL: ${{ secrets.DATABASE_URL }}
+  run: npm run migrate -w @legal-agent/api
+```
+
 ## Deployment sequence
 
-1. Provision PostgreSQL.
+1. Provision PostgreSQL with the `pgvector` extension.
 2. Provision S3 bucket and credentials.
 3. Store secrets in your secret manager.
-4. Deploy the `api` service.
-5. Deploy the `worker` service.
-6. Deploy the `web` service.
-7. Use the platform admin secret to create your first tenant through `POST /api/platform/tenants`.
-8. If you are using local-password auth initially, create or invite your first tenant users.
-9. Configure each tenant's OIDC or SAML provider through the tenant admin APIs and register the callback/metadata details with the identity provider.
-10. Create a tenant SCIM token from the admin console if your IdP will provision users or groups.
-11. If your IdP supports SCIM groups, map it to `/scim/v2/Groups` as well as `/scim/v2/Users`.
-12. Point DNS and TLS to the web and api endpoints.
-13. Verify `GET /health/ready` on the API.
-14. Log in with the tenant admin user, register a passkey, test passwordless passkey login, and confirm SSO/MFA actions work.
-15. Upload a test document and confirm quarantine scan, promotion, OCR, and ingestion all complete successfully.
+4. **Run database migrations** (see above).
+5. Deploy the `api` service.
+6. Deploy the `worker` service.
+7. Deploy the `web` service.
+8. Use the platform admin secret to create your first tenant through `POST /api/platform/tenants`.
+9. If you are using local-password auth initially, create or invite your first tenant users.
+10. Configure each tenant's OIDC or SAML provider through the tenant admin APIs and register the callback/metadata details with the identity provider.
+11. Create a tenant SCIM token from the admin console if your IdP will provision users or groups.
+12. If your IdP supports SCIM groups, map it to `/scim/v2/Groups` as well as `/scim/v2/Users`.
+13. Point DNS and TLS to the web and api endpoints.
+14. Verify `GET /health/ready` on the API.
+15. Log in with the tenant admin user, register a passkey, test passwordless passkey login, and confirm SSO/MFA actions work.
+16. Upload a test document and confirm quarantine scan, promotion, OCR, and ingestion all complete successfully.
 
 ## Scaling guidance
 

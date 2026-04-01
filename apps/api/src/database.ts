@@ -1,11 +1,7 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { sampleData } from "./sampleData.js";
 import { config } from "./config.js";
 import { getApiKeyPrefix, hashApiKey, hashPassword } from "./security.js";
-
-const schemaPath = fileURLToPath(new URL("../../../db/schema.sql", import.meta.url));
 
 if (!config.databaseUrl) {
   throw new Error("DATABASE_URL is required to start the API.");
@@ -182,8 +178,11 @@ async function seedDatabase() {
 }
 
 export async function initializeDatabase() {
-  const schema = await readFile(schemaPath, "utf8");
-  await pool.query(schema);
+  // Migrations are now run via `npm run migrate` before the service starts.
+  // This function only verifies connectivity and optionally seeds demo data.
+  // See DEPLOYMENT.md for the deployment sequence.
+  await pool.query("SELECT 1");
+  console.log("[database] Connection verified.");
   
   // Only seed demo data when explicitly requested
   if (config.seedDemoData) {
