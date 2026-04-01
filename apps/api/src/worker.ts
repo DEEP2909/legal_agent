@@ -17,6 +17,50 @@ const workerId = `worker-${randomUUID()}`;
 // Job timeout in milliseconds (10 minutes)
 const JOB_TIMEOUT_MS = 10 * 60 * 1000;
 
+// Chunking configuration
+const CHUNK_SIZE = 1500;       // characters per chunk
+const CHUNK_OVERLAP = 200;     // overlap between adjacent chunks
+const MIN_CHUNK_LENGTH = 50;   // skip near-empty trailing chunks
+const MAX_CONCURRENT_EMBEDDINGS = 5; // limit concurrent API calls
+
+/**
+ * Split text into overlapping chunks for better semantic search coverage.
+ * This ensures that context isn't lost at chunk boundaries.
+ */
+function chunkText(text: string): string[] {
+  const chunks: string[] = [];
+  for (let i = 0; i < text.length; i += CHUNK_SIZE - CHUNK_OVERLAP) {
+    const chunk = text.slice(i, i + CHUNK_SIZE);
+    if (chunk.trim().length >= MIN_CHUNK_LENGTH) {
+      chunks.push(chunk);
+    }
+  }
+  return chunks;
+}
+
+/**
+ * Embed multiple chunks with concurrency limiting to avoid rate limits.
+ */
+async function embedChunksWithConcurrencyLimit(
+  chunks: string[]
+): Promise<Array<{ index: number; text: string; embedding: number[] }>> {
+  const results: Array<{ index: number; text: string; embedding: number[] }> = [];
+  
+  for (let i = 0; i < chunks.length; i += MAX_CONCURRENT_EMBEDDINGS) {
+    const batch = chunks.slice(i, i + MAX_CONCURRENT_EMBEDDINGS);
+    const batchResults = await Promise.all(
+      batch.map(async (text, batchIndex) => ({
+        index: i + batchIndex,
+        text,
+        embedding: await embedTextWithOpenAI(text)
+      }))
+    );
+    results.push(...batchResults);
+  }
+  
+  return results;
+}
+
 function getFinalStoragePath(storagePath: string) {
   // Handle Unix-style paths
   if (storagePath.includes("/quarantine/")) {
@@ -110,12 +154,24 @@ export async function processPendingDocuments() {
               ? await extractTextForIngestion(document.storagePath, document.mimeType)
               : "");
 
-          const embedding = await embedTextWithOpenAI(normalizedText.slice(0, 4000));
+          // Chunk the document text for better semantic search coverage
+          const chunks = chunkText(normalizedText);
+          
+          // Generate embeddings for all chunks with concurrency limiting
+          const chunkRows = chunks.length > 0 
+            ? await embedChunksWithConcurrencyLimit(chunks)
+            : [];
+
+          // Save all chunks to the database
+          await repository.saveDocumentChunks(document.id, job.tenantId, chunkRows);
+
+          // Store the first chunk's embedding on the document for backward compatibility
+          const firstEmbedding = chunkRows[0]?.embedding ?? [];
 
           await repository.updateDocument(document.id, job.tenantId, (existing) => ({
             ...existing,
             normalizedText,
-            embedding,
+            embedding: firstEmbedding,
             ingestionStatus: "normalized",
             securityStatus: "clean",
             securityReason: undefined

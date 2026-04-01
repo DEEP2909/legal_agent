@@ -1754,19 +1754,32 @@ export const legalWorkflowService = {
   async research(session: AuthSession, question: string): Promise<ResearchResponse> {
     const questionEmbedding = await embedTextWithOpenAI(question);
 
-    const rankedDocuments = (await repository.getDocumentEmbeddings(session.tenantId))
-      .map((document) => ({
-        document,
-        score: cosineSimilarity(questionEmbedding, document.embedding ?? [])
+    // Search across all document chunks for better coverage
+    const allChunks = await repository.getAllDocumentChunks(session.tenantId);
+    
+    const rankedChunks = allChunks
+      .map((chunk) => ({
+        chunk,
+        score: cosineSimilarity(questionEmbedding, chunk.embedding ?? [])
       }))
       .sort((left, right) => right.score - left.score)
-      .slice(0, 5);
+      .slice(0, 10); // Get top 10 chunks
 
-    const corpus = rankedDocuments.map(
-      ({ document, score }) =>
-        `${document.sourceName} (semantic score ${score.toFixed(2)}): ${document.normalizedText.slice(0, 700)}`
+    // Deduplicate by document ID, keeping highest-scoring chunk per document
+    const seenDocuments = new Set<string>();
+    const topChunksByDocument = rankedChunks.filter((item) => {
+      if (seenDocuments.has(item.chunk.documentId)) {
+        return false;
+      }
+      seenDocuments.add(item.chunk.documentId);
+      return true;
+    }).slice(0, 5); // Keep top 5 unique documents
+
+    const corpus = topChunksByDocument.map(
+      ({ chunk, score }) =>
+        `${chunk.sourceName} (semantic score ${score.toFixed(2)}): ${chunk.textContent}`
     );
-    const sourceDocumentIds = rankedDocuments.map(({ document }) => document.id);
+    const sourceDocumentIds = topChunksByDocument.map(({ chunk }) => chunk.documentId);
 
     const prompt = buildResearchPrompt({ question, corpus });
     const result = await answerResearchWithOpenAI(prompt);

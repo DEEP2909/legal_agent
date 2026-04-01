@@ -1626,6 +1626,43 @@ export const repository = {
     return next;
   },
 
+  /**
+   * Save multiple document chunks with embeddings in a single transaction.
+   * Deletes any existing chunks for the document before inserting new ones.
+   */
+  async saveDocumentChunks(
+    documentId: string,
+    tenantId: string,
+    chunks: Array<{ index: number; text: string; embedding: number[] }>
+  ) {
+    // Delete existing chunks for this document
+    await pool.query("delete from document_chunks where document_id = $1", [documentId]);
+
+    if (chunks.length === 0) {
+      return;
+    }
+
+    // Insert all chunks
+    for (const chunk of chunks) {
+      await pool.query(
+        `insert into document_chunks
+         (id, tenant_id, document_id, page_from, page_to, chunk_index, text_content, citation_json, embedding)
+         values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::float8[])`,
+        [
+          `${documentId}-chunk-${chunk.index}`,
+          tenantId,
+          documentId,
+          null, // page_from - could be computed from chunk position
+          null, // page_to
+          chunk.index,
+          chunk.text,
+          JSON.stringify({ chunkIndex: chunk.index }),
+          chunk.embedding
+        ]
+      );
+    }
+  },
+
   async getDocument(documentId: string) {
     const result = await pool.query(`select ${COLS.documents} from documents where id = $1 limit 1`, [documentId]);
     return result.rows[0] ? mapDocument(result.rows[0]) : undefined;
@@ -1781,6 +1818,35 @@ export const repository = {
     return result.rows.map((row) => ({
       ...mapDocument(row),
       embedding: Array.isArray(row.embedding) ? row.embedding.map(Number) : []
+    }));
+  },
+
+  /**
+   * Get all document chunks with embeddings for semantic search.
+   * Returns chunks from all documents in the tenant.
+   */
+  async getAllDocumentChunks(tenantId: string, options?: { limit?: number }) {
+    const limit = Math.min(options?.limit ?? 500, 2000);
+    const result = await pool.query(
+      `select c.id, c.document_id, c.chunk_index, c.text_content, c.embedding,
+              d.source_name, d.doc_type, d.matter_id
+       from document_chunks c
+       join documents d on d.id = c.document_id
+       where c.tenant_id = $1
+       order by d.created_at desc, c.chunk_index asc
+       limit $2`,
+      [tenantId, limit]
+    );
+
+    return result.rows.map((row) => ({
+      id: String(row.id),
+      documentId: String(row.document_id),
+      chunkIndex: Number(row.chunk_index),
+      textContent: String(row.text_content),
+      embedding: Array.isArray(row.embedding) ? row.embedding.map(Number) : [],
+      sourceName: String(row.source_name),
+      docType: String(row.doc_type ?? ""),
+      matterId: String(row.matter_id)
     }));
   },
 
