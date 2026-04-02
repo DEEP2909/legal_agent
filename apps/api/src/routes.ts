@@ -405,7 +405,7 @@ export async function registerRoutes(app: FastifyInstance) {
         .object({
           startIndex: z.coerce.number().int().min(1).default(1),
           count: z.coerce.number().int().min(1).max(200).default(50),
-          filter: z.string().optional()
+          filter: z.string().max(200).optional()
         })
         .parse(request.query);
 
@@ -427,7 +427,7 @@ export async function registerRoutes(app: FastifyInstance) {
         .object({
           startIndex: z.coerce.number().int().min(1).default(1),
           count: z.coerce.number().int().min(1).max(200).default(50),
-          filter: z.string().optional()
+          filter: z.string().max(200).optional()
         })
         .parse(request.query);
 

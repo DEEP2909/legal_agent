@@ -405,14 +405,16 @@ export const repository = {
   async validateAndRotateRefreshToken(
     tokenHash: string
   ): Promise<{ tenantId: string; attorneyId: string } | null> {
-    // Find valid, non-revoked, non-expired token
+    // Atomic: find a valid token AND revoke it in one statement.
+    // If two requests arrive concurrently with the same token,
+    // only one UPDATE matches — the other gets zero rows back.
     const result = await pool.query(
-      `select id, tenant_id, attorney_id
-       from refresh_tokens
-       where token_hash = $1
-         and revoked_at is null
-         and expires_at > now()
-       limit 1`,
+      `UPDATE refresh_tokens
+       SET    revoked_at = now()
+       WHERE  token_hash  = $1
+         AND  revoked_at IS NULL
+         AND  expires_at  > now()
+       RETURNING id, tenant_id, attorney_id`,
       [tokenHash]
     );
 
@@ -420,12 +422,6 @@ export const repository = {
     if (!row) {
       return null;
     }
-
-    // Revoke the used token (single use for security)
-    await pool.query(
-      `update refresh_tokens set revoked_at = now() where id = $1`,
-      [row.id]
-    );
 
     return {
       tenantId: String(row.tenant_id),
