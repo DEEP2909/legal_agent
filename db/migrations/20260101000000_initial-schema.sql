@@ -470,6 +470,21 @@ CREATE INDEX IF NOT EXISTS idx_playbooks_tenant ON playbooks (tenant_id, is_acti
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_hash ON refresh_tokens (token_hash) WHERE revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_attorney ON refresh_tokens (attorney_id, created_at DESC);
 
+-- Usage events table for per-tenant AI cost tracking
+CREATE TABLE IF NOT EXISTS usage_events (
+  id uuid PRIMARY KEY,
+  tenant_id uuid NOT NULL REFERENCES tenants(id),
+  attorney_id uuid REFERENCES attorneys(id),
+  operation text NOT NULL,
+  model text NOT NULL,
+  prompt_tokens integer NOT NULL DEFAULT 0,
+  completion_tokens integer NOT NULL DEFAULT 0,
+  total_tokens integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_events_tenant_month ON usage_events (tenant_id, created_at);
+
 -- HNSW index for vector similarity search.
 -- halfvec required: both HNSW and IVFFlat cap at 2000 dims for the standard vector type.
 -- halfvec supports up to 16000 dims and is available in pgvector >= 0.7.0.

@@ -134,14 +134,22 @@ const client = config.openAiApiKey
     })
   : null;
 
+/** Usage information returned from OpenAI calls */
+export interface OpenAIUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  model: string;
+}
+
 async function runJsonPrompt<T>(
   prompt: string,
   schema: z.ZodType<T>,
   jsonSchema: Record<string, unknown>,
   fallback: T
-): Promise<T> {
+): Promise<{ result: T; usage?: OpenAIUsage }> {
   if (!client) {
-    return fallback;
+    return { result: fallback };
   }
 
   const response = await client.responses.create({
@@ -156,27 +164,39 @@ async function runJsonPrompt<T>(
     }
   });
 
-  return schema.parse(JSON.parse(response.output_text));
+  const usage: OpenAIUsage | undefined = response.usage
+    ? {
+        promptTokens: response.usage.input_tokens ?? 0,
+        completionTokens: response.usage.output_tokens ?? 0,
+        totalTokens: response.usage.total_tokens ?? 0,
+        model: config.openAiModel
+      }
+    : undefined;
+
+  return { result: schema.parse(JSON.parse(response.output_text)), usage };
 }
 
 export async function extractClausesWithOpenAI(prompt: string) {
-  return runJsonPrompt(prompt, clauseSchema, clauseJsonSchema, { clauses: [] });
+  const { result, usage } = await runJsonPrompt(prompt, clauseSchema, clauseJsonSchema, { clauses: [] });
+  return { ...result, usage };
 }
 
 export async function assessRiskWithOpenAI(prompt: string) {
-  return runJsonPrompt(prompt, riskSchema, riskJsonSchema, { flags: [] });
+  const { result, usage } = await runJsonPrompt(prompt, riskSchema, riskJsonSchema, { flags: [] });
+  return { ...result, usage };
 }
 
 export async function answerResearchWithOpenAI(prompt: string) {
-  return runJsonPrompt(prompt, researchSchema, researchJsonSchema, {
+  const { result, usage } = await runJsonPrompt(prompt, researchSchema, researchJsonSchema, {
     answer: "No OpenAI API key configured. This is a placeholder grounded response.",
     citations: []
   });
+  return { ...result, usage };
 }
 
-export async function embedTextWithOpenAI(text: string) {
+export async function embedTextWithOpenAI(text: string): Promise<{ embedding: number[]; usage?: OpenAIUsage }> {
   if (!client) {
-    return Array.from({ length: 12 }, (_, index) => (text.length % (index + 7)) / 10);
+    return { embedding: Array.from({ length: 12 }, (_, index) => (text.length % (index + 7)) / 10) };
   }
 
   const response = await client.embeddings.create({
@@ -184,5 +204,14 @@ export async function embedTextWithOpenAI(text: string) {
     input: text
   });
 
-  return response.data[0]?.embedding ?? [];
+  const usage: OpenAIUsage | undefined = response.usage
+    ? {
+        promptTokens: response.usage.prompt_tokens ?? 0,
+        completionTokens: 0,
+        totalTokens: response.usage.total_tokens ?? 0,
+        model: config.embeddingModel
+      }
+    : undefined;
+
+  return { embedding: response.data[0]?.embedding ?? [], usage };
 }

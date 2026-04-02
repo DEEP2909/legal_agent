@@ -460,22 +460,42 @@ export const repository = {
   },
 
   async getDashboard(tenantId: string): Promise<DashboardSnapshot> {
-    const [tenant, attorneys, matters, documents, clauses, flags] = await Promise.all([
+    // Optimized dashboard: returns counts + recent items instead of loading 1000+ rows
+    const [tenant, counts, recentAttorneys, recentMatters, recentDocuments, openFlags] = await Promise.all([
       pool.query(`select ${COLS.tenants} from tenants where id = $1 limit 1`, [tenantId]),
-      pool.query(`select ${COLS.attorneysPublic} from attorneys where tenant_id = $1 order by created_at desc limit 100`, [tenantId]),
-      pool.query(`select ${COLS.matters} from matters where tenant_id = $1 order by opened_at desc limit 100`, [tenantId]),
-      pool.query(`select ${COLS.documents} from documents where tenant_id = $1 order by created_at desc limit 200`, [tenantId]),
-      pool.query(`select ${COLS.clauses} from clauses where tenant_id = $1 order by created_at desc limit 500`, [tenantId]),
-      pool.query(`select ${COLS.flags} from flags where tenant_id = $1 order by created_at desc limit 200`, [tenantId])
+      // Summary counts in a single query
+      pool.query<{ attorney_count: string; matter_count: string; document_count: string; clause_count: string; open_flag_count: string }>(
+        `SELECT 
+          (SELECT count(*)::text FROM attorneys WHERE tenant_id = $1) AS attorney_count,
+          (SELECT count(*)::text FROM matters WHERE tenant_id = $1) AS matter_count,
+          (SELECT count(*)::text FROM documents WHERE tenant_id = $1) AS document_count,
+          (SELECT count(*)::text FROM clauses WHERE tenant_id = $1) AS clause_count,
+          (SELECT count(*)::text FROM flags WHERE tenant_id = $1 AND status = 'open') AS open_flag_count`,
+        [tenantId]
+      ),
+      // Only load recent 10 of each for display
+      pool.query(`select ${COLS.attorneysPublic} from attorneys where tenant_id = $1 order by created_at desc limit 10`, [tenantId]),
+      pool.query(`select ${COLS.matters} from matters where tenant_id = $1 order by opened_at desc limit 10`, [tenantId]),
+      pool.query(`select ${COLS.documents} from documents where tenant_id = $1 order by created_at desc limit 10`, [tenantId]),
+      pool.query(`select ${COLS.flags} from flags where tenant_id = $1 and status = 'open' order by created_at desc limit 20`, [tenantId])
     ]);
 
+    const countRow = counts.rows[0];
     return {
       tenant: tenant.rows[0] ? mapTenant(tenant.rows[0]) : undefined,
-      attorneys: attorneys.rows.map(mapAttorney),
-      matters: matters.rows.map(mapMatter),
-      documents: documents.rows.map(mapDocument),
-      clauses: clauses.rows.map(mapClause),
-      flags: flags.rows.map(mapFlag)
+      attorneys: recentAttorneys.rows.map(mapAttorney),
+      matters: recentMatters.rows.map(mapMatter),
+      documents: recentDocuments.rows.map(mapDocument),
+      clauses: [], // Clauses loaded on-demand per document, not in dashboard
+      flags: openFlags.rows.map(mapFlag),
+      // New: summary counts for dashboard widgets
+      counts: {
+        attorneys: Number(countRow?.attorney_count ?? 0),
+        matters: Number(countRow?.matter_count ?? 0),
+        documents: Number(countRow?.document_count ?? 0),
+        clauses: Number(countRow?.clause_count ?? 0),
+        openFlags: Number(countRow?.open_flag_count ?? 0)
+      }
     };
   },
 
@@ -2335,5 +2355,72 @@ export const repository = {
       [playbookId, tenantId]
     );
     return (result.rowCount ?? 0) > 0;
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Usage Tracking (Issue #9)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async recordUsageEvent(input: {
+    id: string;
+    tenantId: string;
+    attorneyId?: string;
+    operation: string;
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  }) {
+    await pool.query(
+      `INSERT INTO usage_events (id, tenant_id, attorney_id, operation, model, prompt_tokens, completion_tokens, total_tokens)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        input.id,
+        input.tenantId,
+        input.attorneyId ?? null,
+        input.operation,
+        input.model,
+        input.promptTokens,
+        input.completionTokens,
+        input.totalTokens
+      ]
+    );
+  },
+
+  async getMonthlyTokenUsage(tenantId: string): Promise<{ totalTokens: number; promptTokens: number; completionTokens: number }> {
+    const result = await pool.query<{ total_tokens: string; prompt_tokens: string; completion_tokens: string }>(
+      `SELECT 
+        COALESCE(SUM(total_tokens), 0)::text AS total_tokens,
+        COALESCE(SUM(prompt_tokens), 0)::text AS prompt_tokens,
+        COALESCE(SUM(completion_tokens), 0)::text AS completion_tokens
+       FROM usage_events 
+       WHERE tenant_id = $1 
+         AND created_at >= date_trunc('month', CURRENT_TIMESTAMP)`,
+      [tenantId]
+    );
+    const row = result.rows[0];
+    return {
+      totalTokens: Number(row?.total_tokens ?? 0),
+      promptTokens: Number(row?.prompt_tokens ?? 0),
+      completionTokens: Number(row?.completion_tokens ?? 0)
+    };
+  },
+
+  async getUsageByOperation(tenantId: string, startDate?: Date, endDate?: Date) {
+    const result = await pool.query<{ operation: string; total_tokens: string; call_count: string }>(
+      `SELECT operation, SUM(total_tokens)::text AS total_tokens, COUNT(*)::text AS call_count
+       FROM usage_events 
+       WHERE tenant_id = $1 
+         AND created_at >= COALESCE($2, date_trunc('month', CURRENT_TIMESTAMP))
+         AND created_at <= COALESCE($3, CURRENT_TIMESTAMP)
+       GROUP BY operation
+       ORDER BY SUM(total_tokens) DESC`,
+      [tenantId, startDate ?? null, endDate ?? null]
+    );
+    return result.rows.map(row => ({
+      operation: row.operation,
+      totalTokens: Number(row.total_tokens),
+      callCount: Number(row.call_count)
+    }));
   }
 };

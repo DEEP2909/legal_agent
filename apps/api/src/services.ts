@@ -1701,6 +1701,20 @@ export const legalWorkflowService = {
     })}`;
     const result = await extractClausesWithOpenAI(prompt);
 
+    // Record AI usage for billing/quota tracking
+    if (result.usage) {
+      await repository.recordUsageEvent({
+        id: randomUUID(),
+        tenantId: session.tenantId,
+        attorneyId: session.attorneyId,
+        operation: "clause_extraction",
+        model: result.usage.model,
+        promptTokens: result.usage.promptTokens,
+        completionTokens: result.usage.completionTokens,
+        totalTokens: result.usage.totalTokens
+      });
+    }
+
     const clauses: ClauseRecord[] = result.clauses.map((clause) => ({
       id: randomUUID(),
       documentId: input.documentId,
@@ -1756,6 +1770,20 @@ export const legalWorkflowService = {
     });
     const result = await assessRiskWithOpenAI(prompt);
 
+    // Record AI usage for billing/quota tracking
+    if (result.usage) {
+      await repository.recordUsageEvent({
+        id: randomUUID(),
+        tenantId: session.tenantId,
+        attorneyId: session.attorneyId,
+        operation: "risk_assessment",
+        model: result.usage.model,
+        promptTokens: result.usage.promptTokens,
+        completionTokens: result.usage.completionTokens,
+        totalTokens: result.usage.totalTokens
+      });
+    }
+
     const flags: FlagRecord[] = result.flags.map((flag) => ({
       id: randomUUID(),
       matterId: input.matterId,
@@ -1784,7 +1812,21 @@ export const legalWorkflowService = {
   },
 
   async research(session: AuthSession, question: string): Promise<ResearchResponse> {
-    const questionEmbedding = await embedTextWithOpenAI(question);
+    const { embedding: questionEmbedding, usage: embeddingUsage } = await embedTextWithOpenAI(question);
+
+    // Record embedding usage
+    if (embeddingUsage) {
+      await repository.recordUsageEvent({
+        id: randomUUID(),
+        tenantId: session.tenantId,
+        attorneyId: session.attorneyId,
+        operation: "embedding",
+        model: embeddingUsage.model,
+        promptTokens: embeddingUsage.promptTokens,
+        completionTokens: embeddingUsage.completionTokens,
+        totalTokens: embeddingUsage.totalTokens
+      });
+    }
 
     // Use pgvector for efficient vector similarity search
     const similarChunks = await repository.searchSimilarChunks(
@@ -1811,6 +1853,20 @@ export const legalWorkflowService = {
 
     const prompt = buildResearchPrompt({ question, corpus });
     const result = await answerResearchWithOpenAI(prompt);
+
+    // Record AI usage for billing/quota tracking
+    if (result.usage) {
+      await repository.recordUsageEvent({
+        id: randomUUID(),
+        tenantId: session.tenantId,
+        attorneyId: session.attorneyId,
+        operation: "research",
+        model: result.usage.model,
+        promptTokens: result.usage.promptTokens,
+        completionTokens: result.usage.completionTokens,
+        totalTokens: result.usage.totalTokens
+      });
+    }
     
     // Save research query to history
     await repository.recordResearch({

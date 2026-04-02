@@ -63,11 +63,14 @@ export async function embedChunksWithConcurrencyLimit(
   for (let i = 0; i < chunks.length; i += MAX_CONCURRENT_EMBEDDINGS) {
     const batch = chunks.slice(i, i + MAX_CONCURRENT_EMBEDDINGS);
     const batchResults = await Promise.all(
-      batch.map(async (text, batchIndex) => ({
-        index: i + batchIndex,
-        text,
-        embedding: await embedTextWithOpenAI(text)
-      }))
+      batch.map(async (text, batchIndex) => {
+        const { embedding } = await embedTextWithOpenAI(text);
+        return {
+          index: i + batchIndex,
+          text,
+          embedding
+        };
+      })
     );
     results.push(...batchResults);
   }

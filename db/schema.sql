@@ -449,6 +449,21 @@ create table if not exists refresh_tokens (
 create index if not exists idx_refresh_tokens_hash on refresh_tokens (token_hash) where revoked_at is null;
 create index if not exists idx_refresh_tokens_attorney on refresh_tokens (attorney_id, created_at desc);
 
+-- Usage events table for per-tenant AI cost tracking
+create table if not exists usage_events (
+  id uuid primary key,
+  tenant_id uuid not null references tenants(id),
+  attorney_id uuid references attorneys(id),
+  operation text not null,  -- 'clause_extraction', 'risk_assessment', 'research', 'embedding'
+  model text not null,
+  prompt_tokens integer not null default 0,
+  completion_tokens integer not null default 0,
+  total_tokens integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_usage_events_tenant_month on usage_events (tenant_id, created_at);
+
 -- Note: All columns below are already defined in their respective CREATE TABLE statements above.
 -- These ALTER TABLE statements were kept as migration-safe idempotent stubs during the initial
 -- MVP development phase. They have been removed to reduce startup overhead.

@@ -102,6 +102,14 @@ export interface DashboardSnapshot {
   clauses: ClauseRecord[];
   flags: FlagRecord[];
   attorneys: Attorney[];
+  /** Summary counts for dashboard widgets (avoids loading all rows) */
+  counts?: {
+    attorneys: number;
+    matters: number;
+    documents: number;
+    clauses: number;
+    openFlags: number;
+  };
 }
 
 export interface UploadDocumentRequest {

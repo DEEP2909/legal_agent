@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 
+// Security headers (CSP is handled by middleware.ts for nonce support)
 const securityHeaders = [
   {
     key: "X-DNS-Prefetch-Control",
@@ -28,21 +29,8 @@ const securityHeaders = [
   {
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), interest-cohort=()"
-  },
-  {
-    key: "Content-Security-Policy",
-    value: [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
-      "font-src 'self'",
-      "connect-src 'self' " + (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000"),
-      "frame-ancestors 'none'",
-      "form-action 'self'",
-      "base-uri 'self'"
-    ].join("; ")
   }
+  // Note: Content-Security-Policy is now handled by middleware.ts with nonce support
 ];
 
 const nextConfig: NextConfig = {
