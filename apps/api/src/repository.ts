@@ -38,7 +38,7 @@ const COLS = {
   documentChunks: "id, tenant_id, document_id, page_from, page_to, chunk_index, text_content, citation_json, embedding, created_at",
   scimGroups: "id, tenant_id, display_name, external_id, created_at, updated_at",
   scimGroupMembers: "group_id, attorney_id, created_at",
-  samlLoginSessions: "id, tenant_id, provider_id, relay_state, request_id, created_at, expires_at"
+  samlLoginSessions: "id, tenant_id, provider_id, attorney_id, name_id, name_id_format, session_index, created_at, updated_at"
 } as const;
 
 function mapAttorney(row: Record<string, unknown>): Attorney {
