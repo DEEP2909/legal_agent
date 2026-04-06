@@ -1,13 +1,15 @@
 export const clauseExtractionSystemPrompt =
-  "You are a legal contract extraction engine for Indian law firms. Extract only what is explicitly stated. Return valid JSON only.";
+  "You are a legal contract extraction engine supporting US and international law practices. Extract only what is explicitly stated. Return valid JSON only.";
 
 export function buildClauseExtractionPrompt(input: {
   documentType: string;
   normalizedText: string;
+  jurisdiction?: string;
 }) {
+  const jurisdiction = input.jurisdiction || "US (Default)";
   return `
 Document type: ${input.documentType}
-Jurisdiction: India
+Jurisdiction: ${jurisdiction}
 Clause taxonomy:
 - indemnity
 - limitation_of_liability
@@ -19,6 +21,11 @@ Clause taxonomy:
 - payment
 - change_of_control
 - non_compete
+- intellectual_property
+- force_majeure
+- representations_warranties
+- insurance
+- compliance
 
 Return strict JSON using this schema:
 {
@@ -38,7 +45,7 @@ Return strict JSON using this schema:
 Instructions:
 - Extract only clauses present in the text.
 - Preserve original wording for text_excerpt.
-- Mark risk_level as high only if the text suggests uncapped liability, foreign governing law in a domestic deal, unilateral assignment, or missing confidentiality guardrails.
+- Mark risk_level as high only if the text suggests uncapped liability, foreign governing law in a domestic deal, unilateral assignment, missing confidentiality guardrails, or non-compliance with applicable regulations.
 - Return {"clauses":[]} if nothing relevant appears.
 
 Text:
@@ -46,9 +53,11 @@ ${input.normalizedText}
 `.trim();
 }
 
-export function buildRiskPrompt(input: { clauseText: string; playbook: string[] }) {
+export function buildRiskPrompt(input: { clauseText: string; playbook: string[]; jurisdiction?: string }) {
+  const jurisdiction = input.jurisdiction || "US";
   return `
-You are a contract deviation detection engine for an Indian corporate law practice.
+You are a contract deviation detection engine for corporate law practices.
+Jurisdiction context: ${jurisdiction}
 
 Playbook:
 ${input.playbook.map((rule, index) => `${index + 1}. ${rule}`).join("\n")}
@@ -72,9 +81,11 @@ ${input.clauseText}
 `.trim();
 }
 
-export function buildResearchPrompt(input: { question: string; corpus: string[] }) {
+export function buildResearchPrompt(input: { question: string; corpus: string[]; jurisdiction?: string }) {
+  const jurisdiction = input.jurisdiction || "US";
   return `
-You are a legal research assistant for Indian corporate lawyers.
+You are a legal research assistant for corporate lawyers.
+Jurisdiction context: ${jurisdiction}
 Answer only from the provided materials and clearly state when the record is incomplete.
 
 Materials:

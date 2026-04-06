@@ -6,13 +6,8 @@ import { config } from "../config.js";
 import { repository } from "../repository.js";
 import { decryptSecret, generateOpaqueToken, hashApiKey, hashPassword } from "../security.js";
 
-export const defaultPlaybook = [
-  "Indemnity cap must not exceed 20% of purchase price.",
-  "Governing law must be Indian law for domestic deals.",
-  "Counterparty assignment requires prior written consent.",
-  "Confidentiality clauses must survive termination for at least 3 years.",
-  "Dispute resolution should prefer arbitration seated in Mumbai."
-];
+// Region-specific playbook rules - re-export from helpers for backward compatibility
+export { defaultPlaybook, playbooksByRegion, getPlaybookForJurisdiction } from "./helpers.js";
 
 export function ensureTenant<T extends { tenantId?: string }>(entity: T, tenantId: string) {
   return { ...entity, tenantId } as T & { tenantId: string };
