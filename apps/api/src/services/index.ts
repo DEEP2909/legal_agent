@@ -1,8 +1,6 @@
-/**
- * Services Index
- * Re-exports helpers for use by other modules
- * 
- * NOTE: Full domain service split (auth, document, tenant, etc.) is planned but deferred.
- * See issues.txt #20 for details. The main services.ts monolith remains the source of truth.
- */
-export * from "./helpers.js";
+export * from "./admin.service.js";
+export * from "./auth.service.js";
+export * from "./document.service.js";
+export * from "./platform.service.js";
+export * from "./scim.service.js";
+export * from "./shared.js";

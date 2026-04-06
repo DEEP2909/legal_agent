@@ -206,6 +206,20 @@ function mapSsoProvider(row: Record<string, unknown>): SsoProviderSummary {
   };
 }
 
+function mapResearchHistoryRow(row: Record<string, unknown>) {
+  return {
+    id: String(row.id),
+    tenantId: String(row.tenant_id),
+    attorneyId: row.attorney_id ? String(row.attorney_id) : undefined,
+    question: String(row.question),
+    answer: String(row.answer ?? ""),
+    modelName: row.model_name ? String(row.model_name) : undefined,
+    sourceDocumentIds: Array.isArray(row.source_document_ids) ? row.source_document_ids : [],
+    contextUsed: row.context_used ? String(row.context_used) : undefined,
+    createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : undefined
+  };
+}
+
 export const repository = {
   async authenticateApiKey(keyHash: string): Promise<AuthSession | null> {
     const result = await pool.query(
@@ -495,14 +509,37 @@ export const repository = {
     };
   },
 
-  async listTenants(options?: { limit?: number; offset?: number }) {
+  async listTenants(options?: { limit?: number; cursor?: string }) {
     const limit = Math.min(options?.limit ?? 200, 200);
-    const offset = options?.offset ?? 0;
+    const cursor = this.decodeCursor(options?.cursor);
+    const params: Array<string | number> = [limit + 1];
+    let whereClause = "";
+
+    if (cursor) {
+      params.push(cursor.createdAt, cursor.id);
+      whereClause = `where (created_at, id) < ($2, $3)`;
+    }
+
     const result = await pool.query(
-      `select ${COLS.tenants} from tenants order by created_at desc limit $1 offset $2`,
-      [limit, offset]
+      `select ${COLS.tenants} from tenants
+       ${whereClause}
+       order by created_at desc, id desc
+       limit $1`,
+      params
     );
-    return result.rows.map(mapTenant);
+
+    const rows = result.rows.map(mapTenant);
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const lastRow = hasMore ? result.rows[limit - 1] : result.rows.at(-1);
+
+    return {
+      items,
+      nextCursor:
+        hasMore && lastRow?.created_at && lastRow?.id
+          ? this.encodeCursor(String(lastRow.created_at), String(lastRow.id))
+          : null
+    };
   },
 
   async countTenants() {
@@ -533,14 +570,37 @@ export const repository = {
     return result.rows[0] ? mapTenant(result.rows[0]) : undefined;
   },
 
-  async listAttorneys(tenantId: string, options?: { limit?: number; offset?: number }) {
+  async listAttorneys(tenantId: string, options?: { limit?: number; cursor?: string }) {
     const limit = Math.min(options?.limit ?? 200, 200);
-    const offset = options?.offset ?? 0;
+    const cursor = this.decodeCursor(options?.cursor);
+    const params: Array<string | number> = [tenantId, limit + 1];
+    let whereClause = "where tenant_id = $1";
+
+    if (cursor) {
+      params.push(cursor.createdAt, cursor.id);
+      whereClause += ` and (created_at, id) < ($3, $4)`;
+    }
+
     const result = await pool.query(
-      `select ${COLS.attorneysPublic} from attorneys where tenant_id = $1 order by created_at desc limit $2 offset $3`,
-      [tenantId, limit, offset]
+      `select ${COLS.attorneysPublic} from attorneys
+       ${whereClause}
+       order by created_at desc, id desc
+       limit $2`,
+      params
     );
-    return result.rows.map(mapAttorney);
+
+    const rows = result.rows.map(mapAttorney);
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const lastRow = hasMore ? result.rows[limit - 1] : result.rows.at(-1);
+
+    return {
+      items,
+      nextCursor:
+        hasMore && lastRow?.created_at && lastRow?.id
+          ? this.encodeCursor(String(lastRow.created_at), String(lastRow.id))
+          : null
+    };
   },
 
   async countAttorneys(tenantId: string) {
@@ -552,7 +612,6 @@ export const repository = {
   },
 
   async listAttorneysForScim(input: { tenantId: string; startIndex: number; count: number; email?: string }) {
-    const offset = Math.max(input.startIndex - 1, 0);
     const values: Array<string | number> = [input.tenantId];
     let whereClause = "where tenant_id = $1";
 
@@ -566,14 +625,62 @@ export const repository = {
       values
     );
 
-    values.push(input.count);
-    values.push(offset);
+    let cursor: { createdAt: string; id: string } | null = null;
+    let remainingToSkip = Math.max(input.startIndex - 1, 0);
+
+    while (remainingToSkip > 0) {
+      const batchValues = [...values];
+      let batchWhereClause = whereClause;
+
+      if (cursor) {
+        batchValues.push(cursor.createdAt, cursor.id);
+        batchWhereClause += ` and (created_at, id) > ($${batchValues.length - 1}, $${batchValues.length})`;
+      }
+
+      const batchLimit = Math.min(remainingToSkip, 200);
+      batchValues.push(batchLimit);
+
+      const batchResult = await pool.query(
+        `select id, created_at from attorneys
+         ${batchWhereClause}
+         order by created_at asc, id asc
+         limit $${batchValues.length}`,
+        batchValues
+      );
+
+      if (batchResult.rows.length === 0) {
+        return {
+          totalResults: Number(totalResult.rows[0]?.count ?? "0"),
+          attorneys: []
+        };
+      }
+
+      const lastBatchRow = batchResult.rows.at(-1);
+      if (!lastBatchRow?.created_at || !lastBatchRow?.id) {
+        break;
+      }
+
+      cursor = {
+        createdAt: String(lastBatchRow.created_at),
+        id: String(lastBatchRow.id)
+      };
+      remainingToSkip -= batchResult.rows.length;
+    }
+
+    const resultValues = [...values];
+    let resultWhereClause = whereClause;
+    if (cursor) {
+      resultValues.push(cursor.createdAt, cursor.id);
+      resultWhereClause += ` and (created_at, id) > ($${resultValues.length - 1}, $${resultValues.length})`;
+    }
+
+    resultValues.push(input.count);
     const result = await pool.query(
       `select ${COLS.attorneys} from attorneys
-       ${whereClause}
-       order by created_at asc
-       limit $${values.length - 1} offset $${values.length}`,
-      values
+       ${resultWhereClause}
+       order by created_at asc, id asc
+       limit $${resultValues.length}`,
+      resultValues
     );
 
     return {
@@ -656,14 +763,37 @@ export const repository = {
     return result.rows[0] ? mapAttorney(result.rows[0]) : undefined;
   },
 
-  async listApiKeys(tenantId: string, options?: { limit?: number; offset?: number }) {
+  async listApiKeys(tenantId: string, options?: { limit?: number; cursor?: string }) {
     const limit = Math.min(options?.limit ?? 200, 200);
-    const offset = options?.offset ?? 0;
+    const cursor = this.decodeCursor(options?.cursor);
+    const params: Array<string | number> = [tenantId, limit + 1];
+    let whereClause = "where tenant_id = $1";
+
+    if (cursor) {
+      params.push(cursor.createdAt, cursor.id);
+      whereClause += ` and (created_at, id) < ($3, $4)`;
+    }
+
     const result = await pool.query(
-      `select ${COLS.apiKeys} from api_keys where tenant_id = $1 order by created_at desc limit $2 offset $3`,
-      [tenantId, limit, offset]
+      `select ${COLS.apiKeys} from api_keys
+       ${whereClause}
+       order by created_at desc, id desc
+       limit $2`,
+      params
     );
-    return result.rows.map(mapApiKey);
+
+    const rows = result.rows.map(mapApiKey);
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const lastRow = hasMore ? result.rows[limit - 1] : result.rows.at(-1);
+
+    return {
+      items,
+      nextCursor:
+        hasMore && lastRow?.created_at && lastRow?.id
+          ? this.encodeCursor(String(lastRow.created_at), String(lastRow.id))
+          : null
+    };
   },
 
   async countApiKeys(tenantId: string) {
@@ -758,14 +888,37 @@ export const repository = {
     };
   },
 
-  async listInvitations(tenantId: string, options?: { limit?: number; offset?: number }) {
+  async listInvitations(tenantId: string, options?: { limit?: number; cursor?: string }) {
     const limit = Math.min(options?.limit ?? 200, 200);
-    const offset = options?.offset ?? 0;
+    const cursor = this.decodeCursor(options?.cursor);
+    const params: Array<string | number> = [tenantId, limit + 1];
+    let whereClause = "where tenant_id = $1";
+
+    if (cursor) {
+      params.push(cursor.createdAt, cursor.id);
+      whereClause += ` and (created_at, id) < ($3, $4)`;
+    }
+
     const result = await pool.query(
-      `select ${COLS.invitations} from invitations where tenant_id = $1 order by created_at desc limit $2 offset $3`,
-      [tenantId, limit, offset]
+      `select ${COLS.invitations} from invitations
+       ${whereClause}
+       order by created_at desc, id desc
+       limit $2`,
+      params
     );
-    return result.rows.map(mapInvitation);
+
+    const rows = result.rows.map(mapInvitation);
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const lastRow = hasMore ? result.rows[limit - 1] : result.rows.at(-1);
+
+    return {
+      items,
+      nextCursor:
+        hasMore && lastRow?.created_at && lastRow?.id
+          ? this.encodeCursor(String(lastRow.created_at), String(lastRow.id))
+          : null
+    };
   },
 
   async countInvitations(tenantId: string) {
@@ -1437,7 +1590,6 @@ export const repository = {
   },
 
   async listScimGroups(input: { tenantId: string; startIndex: number; count: number; displayName?: string }) {
-    const offset = Math.max(input.startIndex - 1, 0);
     const values: Array<string | number> = [input.tenantId];
     let whereClause = "where tenant_id = $1";
 
@@ -1451,14 +1603,62 @@ export const repository = {
       values
     );
 
-    values.push(input.count);
-    values.push(offset);
+    let cursor: { createdAt: string; id: string } | null = null;
+    let remainingToSkip = Math.max(input.startIndex - 1, 0);
+
+    while (remainingToSkip > 0) {
+      const batchValues = [...values];
+      let batchWhereClause = whereClause;
+
+      if (cursor) {
+        batchValues.push(cursor.createdAt, cursor.id);
+        batchWhereClause += ` and (created_at, id) > ($${batchValues.length - 1}, $${batchValues.length})`;
+      }
+
+      const batchLimit = Math.min(remainingToSkip, 200);
+      batchValues.push(batchLimit);
+
+      const batchResult = await pool.query(
+        `select id, created_at from scim_groups
+         ${batchWhereClause}
+         order by created_at asc, id asc
+         limit $${batchValues.length}`,
+        batchValues
+      );
+
+      if (batchResult.rows.length === 0) {
+        return {
+          totalResults: Number(totalResult.rows[0]?.count ?? "0"),
+          groups: []
+        };
+      }
+
+      const lastBatchRow = batchResult.rows.at(-1);
+      if (!lastBatchRow?.created_at || !lastBatchRow?.id) {
+        break;
+      }
+
+      cursor = {
+        createdAt: String(lastBatchRow.created_at),
+        id: String(lastBatchRow.id)
+      };
+      remainingToSkip -= batchResult.rows.length;
+    }
+
+    const resultValues = [...values];
+    let resultWhereClause = whereClause;
+    if (cursor) {
+      resultValues.push(cursor.createdAt, cursor.id);
+      resultWhereClause += ` and (created_at, id) > ($${resultValues.length - 1}, $${resultValues.length})`;
+    }
+
+    resultValues.push(input.count);
     const result = await pool.query(
       `select ${COLS.scimGroups} from scim_groups
-       ${whereClause}
-       order by created_at asc
-       limit $${values.length - 1} offset $${values.length}`,
-      values
+       ${resultWhereClause}
+       order by created_at asc, id asc
+       limit $${resultValues.length}`,
+      resultValues
     );
 
     return {
@@ -1965,34 +2165,56 @@ export const repository = {
     return id;
   },
 
-  async getResearchHistory(tenantId: string, opts?: { attorneyId?: string; limit?: number; offset?: number }) {
+  async getResearchHistory(
+    tenantId: string,
+    opts?: { attorneyId?: string; limit?: number; cursor?: string }
+  ): Promise<{
+    items: Array<{
+      id: string;
+      tenantId: string;
+      attorneyId?: string;
+      question: string;
+      answer: string;
+      modelName?: string;
+      sourceDocumentIds: string[];
+      contextUsed?: string;
+      createdAt?: string;
+    }>;
+    nextCursor: string | null;
+  }> {
     const limit = Math.min(opts?.limit ?? 50, 100);
-    const offset = opts?.offset ?? 0;
-    
+    const cursor = this.decodeCursor(opts?.cursor);
+
     let query = `select id, tenant_id, attorney_id, question, answer, model_name, source_document_ids, context_used, created_at
                  from research_queries where tenant_id = $1`;
     const params: (string | number)[] = [tenantId];
-    
+
     if (opts?.attorneyId) {
       params.push(opts.attorneyId);
       query += ` and attorney_id = $${params.length}`;
     }
-    
-    query += ` order by created_at desc limit $${params.length + 1} offset $${params.length + 2}`;
-    params.push(limit, offset);
-    
+
+    if (cursor) {
+      params.push(cursor.createdAt, cursor.id);
+      query += ` and (created_at, id) < ($${params.length - 1}, $${params.length})`;
+    }
+
+    params.push(limit + 1);
+    query += ` order by created_at desc, id desc limit $${params.length}`;
+
     const result = await pool.query(query, params);
-    return result.rows.map((row) => ({
-      id: String(row.id),
-      tenantId: String(row.tenant_id),
-      attorneyId: row.attorney_id ? String(row.attorney_id) : undefined,
-      question: String(row.question),
-      answer: String(row.answer ?? ""),
-      modelName: row.model_name ? String(row.model_name) : undefined,
-      sourceDocumentIds: Array.isArray(row.source_document_ids) ? row.source_document_ids : [],
-      contextUsed: row.context_used ? String(row.context_used) : undefined,
-      createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : undefined
-    }));
+    const rows = result.rows.map(mapResearchHistoryRow);
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const lastRow = hasMore ? result.rows[limit - 1] : result.rows.at(-1);
+
+    return {
+      items,
+      nextCursor:
+        hasMore && lastRow?.created_at && lastRow?.id
+          ? this.encodeCursor(String(lastRow.created_at), String(lastRow.id))
+          : null
+    };
   },
 
   async createWorkflowJob(input: {

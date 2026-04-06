@@ -12,8 +12,76 @@ env:
   IMAGE_PREFIX: ${{ github.repository }}
 
 jobs:
+  # Run tests before releasing - reuse CI workflow jobs
+  lint-and-type-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx biome check .
+      - run: npm run build -w @legal-agent/shared
+      - run: npm run build -w @legal-agent/api
+      - run: npm run build -w @legal-agent/web
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @legal-agent/shared
+      - run: npm test -w @legal-agent/api
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: [lint-and-type-check, unit-tests]
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.0-pg16
+        env:
+          POSTGRES_DB: legal_agent_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/legal_agent_test
+      NODE_ENV: test
+      OPENAI_API_KEY: sk-test-placeholder-key-for-ci
+      APP_ENCRYPTION_KEY: test-encryption-key-32-bytes-long!
+      JWT_SECRET: test-jwt-secret-32-bytes-long-xxx!
+      PLATFORM_ADMIN_SECRET: test-platform-admin-secret-32-bytes!
+      DEMO_API_KEY: test-demo-api-key-at-least-24-chars
+      DEMO_USER_EMAIL: test@example.com
+      DEMO_USER_PASSWORD: TestPassword123!
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @legal-agent/shared
+      - name: Run database migrations
+        run: npm run migrate -w @legal-agent/api
+      - name: Run tests
+        run: npm run test -w @legal-agent/api
+
   release:
     runs-on: ubuntu-latest
+    needs: [integration-tests]
     permissions:
       contents: read
       packages: write
@@ -41,6 +109,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Extract metadata for Worker image
         id: meta-worker
@@ -52,6 +121,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Extract metadata for Web image
         id: meta-web
@@ -63,6 +133,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push API image
         uses: docker/build-push-action@v5

@@ -438,7 +438,16 @@ export async function registerRoutes(app: FastifyInstance) {
   app.register(async (platformApp) => {
     platformApp.addHook("preHandler", requirePlatformAdmin);
 
-    platformApp.get("/api/platform/tenants", platformAdminRateLimit, async () => legalWorkflowService.listTenants());
+    platformApp.get("/api/platform/tenants", platformAdminRateLimit, async (request) => {
+      const query = z
+        .object({
+          limit: z.coerce.number().int().min(1).max(200).default(50),
+          cursor: z.string().max(512).optional()
+        })
+        .parse(request.query);
+
+      return legalWorkflowService.listTenants(query);
+    });
 
     platformApp.post("/api/platform/tenants", platformAdminRateLimit, async (request) => {
       const body = z
@@ -1238,7 +1247,7 @@ export async function registerRoutes(app: FastifyInstance) {
       const query = z
         .object({
           limit: z.coerce.number().int().min(1).max(100).default(50),
-          offset: z.coerce.number().int().min(0).default(0)
+          cursor: z.string().max(512).optional()
         })
         .parse(request.query);
       return legalWorkflowService.getResearchHistory(request.authSession, query);
