@@ -134,6 +134,45 @@ const client = config.openAiApiKey
     })
   : null;
 
+// Simple circuit breaker state for OpenAI calls
+const circuitBreaker = {
+  failures: 0,
+  lastFailure: 0,
+  isOpen: false,
+  threshold: 5,           // Open circuit after 5 consecutive failures
+  resetTimeoutMs: 30_000, // Try again after 30 seconds
+};
+
+function checkCircuitBreaker(): void {
+  if (circuitBreaker.isOpen) {
+    const timeSinceLastFailure = Date.now() - circuitBreaker.lastFailure;
+    if (timeSinceLastFailure > circuitBreaker.resetTimeoutMs) {
+      // Half-open: allow one request through to test
+      circuitBreaker.isOpen = false;
+      circuitBreaker.failures = 0;
+    } else {
+      throw new Error(
+        `OpenAI circuit breaker is open. Service temporarily unavailable. ` +
+        `Retry after ${Math.ceil((circuitBreaker.resetTimeoutMs - timeSinceLastFailure) / 1000)}s.`
+      );
+    }
+  }
+}
+
+function recordCircuitSuccess(): void {
+  circuitBreaker.failures = 0;
+  circuitBreaker.isOpen = false;
+}
+
+function recordCircuitFailure(): void {
+  circuitBreaker.failures++;
+  circuitBreaker.lastFailure = Date.now();
+  if (circuitBreaker.failures >= circuitBreaker.threshold) {
+    circuitBreaker.isOpen = true;
+    console.warn(`[OpenAI] Circuit breaker opened after ${circuitBreaker.failures} failures`);
+  }
+}
+
 /** Usage information returned from OpenAI calls */
 export interface OpenAIUsage {
   promptTokens: number;
@@ -152,28 +191,37 @@ async function runJsonPrompt<T>(
     return { result: fallback };
   }
 
-  const response = await client.responses.create({
-    model: config.openAiModel,
-    input: prompt,
-    text: {
-      format: {
-        type: "json_schema",
-        name: "legal_agent_response",
-        schema: jsonSchema
-      }
-    }
-  });
+  checkCircuitBreaker();
 
-  const usage: OpenAIUsage | undefined = response.usage
-    ? {
-        promptTokens: response.usage.input_tokens ?? 0,
-        completionTokens: response.usage.output_tokens ?? 0,
-        totalTokens: response.usage.total_tokens ?? 0,
-        model: config.openAiModel
+  try {
+    const response = await client.responses.create({
+      model: config.openAiModel,
+      input: prompt,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "legal_agent_response",
+          schema: jsonSchema
+        }
       }
-    : undefined;
+    });
 
-  return { result: schema.parse(JSON.parse(response.output_text)), usage };
+    recordCircuitSuccess();
+
+    const usage: OpenAIUsage | undefined = response.usage
+      ? {
+          promptTokens: response.usage.input_tokens ?? 0,
+          completionTokens: response.usage.output_tokens ?? 0,
+          totalTokens: response.usage.total_tokens ?? 0,
+          model: config.openAiModel
+        }
+      : undefined;
+
+    return { result: schema.parse(JSON.parse(response.output_text)), usage };
+  } catch (error) {
+    recordCircuitFailure();
+    throw error;
+  }
 }
 
 export async function extractClausesWithOpenAI(prompt: string) {
@@ -199,19 +247,28 @@ export async function embedTextWithOpenAI(text: string): Promise<{ embedding: nu
     return { embedding: Array.from({ length: 12 }, (_, index) => (text.length % (index + 7)) / 10) };
   }
 
-  const response = await client.embeddings.create({
-    model: config.embeddingModel,
-    input: text
-  });
+  checkCircuitBreaker();
 
-  const usage: OpenAIUsage | undefined = response.usage
-    ? {
-        promptTokens: response.usage.prompt_tokens ?? 0,
-        completionTokens: 0,
-        totalTokens: response.usage.total_tokens ?? 0,
-        model: config.embeddingModel
-      }
-    : undefined;
+  try {
+    const response = await client.embeddings.create({
+      model: config.embeddingModel,
+      input: text
+    });
 
-  return { embedding: response.data[0]?.embedding ?? [], usage };
+    recordCircuitSuccess();
+
+    const usage: OpenAIUsage | undefined = response.usage
+      ? {
+          promptTokens: response.usage.prompt_tokens ?? 0,
+          completionTokens: 0,
+          totalTokens: response.usage.total_tokens ?? 0,
+          model: config.embeddingModel
+        }
+      : undefined;
+
+    return { embedding: response.data[0]?.embedding ?? [], usage };
+  } catch (error) {
+    recordCircuitFailure();
+    throw error;
+  }
 }

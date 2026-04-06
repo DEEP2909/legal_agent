@@ -414,6 +414,9 @@ create index if not exists idx_research_queries_attorney on research_queries (at
 create index if not exists idx_document_chunks_document on document_chunks (document_id);
 create index if not exists idx_document_chunks_tenant on document_chunks (tenant_id, document_id);
 
+-- Index for dashboard and document list queries filtered by tenant + status
+create index if not exists idx_documents_tenant_status on documents (tenant_id, ingestion_status, created_at desc);
+
 -- HNSW index — requires halfvec for dimensions > 2000 (pgvector >= 0.7.0)
 create index if not exists idx_document_chunks_embedding
   on document_chunks using hnsw (embedding halfvec_cosine_ops)

@@ -5,6 +5,9 @@ import { readStoredObject } from "./storage.js";
 
 const client = config.openAiApiKey ? new OpenAI({ apiKey: config.openAiApiKey }) : null;
 
+// Maximum file size for OpenAI Vision API (18MB with headroom for base64 overhead)
+const MAX_VISION_BYTES = 18 * 1024 * 1024;
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -12,6 +15,13 @@ function sleep(ms: number) {
 async function runOpenAiImageOcr(buffer: Buffer, mimeType: string) {
   if (!client) {
     throw new Error("OPENAI_API_KEY is required for OCR_PROVIDER=openai.");
+  }
+
+  if (buffer.length > MAX_VISION_BYTES) {
+    throw new Error(
+      `File too large for Vision OCR (${buffer.length} bytes). ` +
+      `Use Azure Document Intelligence for large files.`
+    );
   }
 
   const dataUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
@@ -65,11 +75,22 @@ async function runAzureDocumentIntelligenceOcr(buffer: Buffer, mimeType: string)
 
   for (let attempt = 0; attempt < 30; attempt += 1) {
     await sleep(1500);
-    const resultResponse = await fetch(operationLocation, {
-      headers: {
-        "Ocp-Apim-Subscription-Key": config.azureDocumentIntelligenceKey
-      }
-    });
+    
+    // Add timeout to prevent indefinite hangs
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    
+    let resultResponse: Response;
+    try {
+      resultResponse = await fetch(operationLocation, {
+        signal: controller.signal,
+        headers: {
+          "Ocp-Apim-Subscription-Key": config.azureDocumentIntelligenceKey
+        }
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (!resultResponse.ok) {
       throw new Error("Azure Document Intelligence result polling failed.");

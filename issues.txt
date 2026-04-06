@@ -1,0 +1,261 @@
+🔴 Critical — Fix Before Any Live Traffic
+1. Fastify missing trustProxy — rate limiting is broken behind a load balancer
+File: apps/api/src/index.ts line 18
+ts// Current — broken
+const app = Fastify({ logger: true });
+
+// Fix
+const app = Fastify({ logger: true, trustProxy: true });
+Without trustProxy: true, Fastify cannot read X-Forwarded-For. Every request behind your ALB/nginx appears to come from the same load-balancer IP. The global rate limit (100 req/min) becomes a per-load-balancer limit, not per-client. Every single user shares one bucket — your entire platform becomes throttled as a unit. This also breaks any IP-based geo-filtering you add later.
+
+2. In-memory rate limiting — meaningless across multiple API replicas
+File: apps/api/src/index.ts line 68
+tsawait app.register(rateLimit, { max: 100, timeWindow: "1 minute" });
+// No store: configured → defaults to in-process memory
+Each API replica keeps its own counter. With 3 replicas behind an LB, a single attacker gets 300 req/min on auth endpoints (3 × 100). The ban: 3 on auth routes is also local-only and resets on pod restart.
+Fix: Add Redis-backed store (Fastify rate-limit supports it natively):
+tsimport Redis from "ioredis";
+const redis = new Redis(config.redisUrl);
+await app.register(rateLimit, {
+  max: 100, timeWindow: "1 minute",
+  redis
+});
+Add REDIS_URL to your env vars.
+
+3. cleanupExpiredRefreshTokens() is defined but never called
+File: apps/api/src/repository.ts line 446 — the method exists, but there is zero call to it anywhere in the codebase. The refresh_tokens table accumulates every token ever issued and never gets pruned. Same for expired SSO auth states, MFA challenges, WebAuthn challenges, and SAML relay states — all these tables grow unboundedly.
+Fix: Add a periodic cleanup job in worker.ts alongside the existing heartbeat:
+tssetInterval(async () => {
+  await repository.cleanupExpiredRefreshTokens();
+  // add equivalent cleanup for auth_exchanges, mfa_challenges, etc.
+}, 6 * 60 * 60 * 1000); // every 6 hours
+
+4. Legacy updateDocument path uses float8[] — type mismatch with halfvec(3072) schema
+File: apps/api/src/repository.ts ~line 1703
+sql-- Actual insert in updateDocument uses:
+$9::float8[]
+
+-- But the schema declares:
+embedding halfvec(3072)
+The legacy single-chunk code path in updateDocument (used by the seeder and some older code paths) still casts the embedding as float8[] instead of halfvec. This will throw a PostgreSQL type cast error at runtime on any code path that hits that branch. The saveDocumentChunks function correctly uses halfvec, but this path does not.
+Fix: Change $9::float8[] → $9::halfvec in that insert statement.
+
+5. storage.ts — rename() will throw EXDEV on cross-filesystem moves
+File: apps/api/src/storage.ts line 158
+tsawait rename(input.fromPath, input.toPath);
+rename() is not atomic across filesystem boundaries (different Docker volumes, tmpfs vs persistent disk). Moving from /quarantine/ to /uploads/ will throw EXDEV: cross-device link not permitted if those paths are on separate mounts — which is common in containerized deployments.
+Fix:
+tstry {
+  await rename(input.fromPath, input.toPath);
+} catch (err: unknown) {
+  if ((err as NodeJS.ErrnoException).code === "EXDEV") {
+    await copyFile(input.fromPath, input.toPath);
+    await unlink(input.fromPath);
+  } else throw err;
+}
+
+🟠 Major — Fix Before Scaling
+6. DEMO_* env vars unconditionally required — forces meaningless secrets in production
+File: apps/api/src/config.ts lines 24–32
+DEMO_API_KEY, DEMO_USER_EMAIL, and DEMO_USER_PASSWORD are required fields with strict validators regardless of whether SEED_DEMO_DATA is false. Every production deployment must define fake demo credentials that serve no purpose, and if an operator sets them to obvious values, they become a security liability.
+Fix: Make them optional with superRefine:
+tsDEMO_API_KEY: z.string().default(""),
+DEMO_USER_EMAIL: z.string().default(""),
+DEMO_USER_PASSWORD: z.string().default(""),
+// In superRefine:
+if (env.SEED_DEMO_DATA && !env.DEMO_API_KEY) {
+  ctx.addIssue({ ... "DEMO_API_KEY required when SEED_DEMO_DATA=true" })
+}
+
+7. CI pipeline builds Docker images but never pushes them — no CD path exists
+File: .github/workflows/ci.yml
+The docker-build job builds all three images tagged with ${{ github.sha }} but has no docker login, no docker push, and no registry configuration. There is no path from a merged PR to a deployable artifact. You cannot automate deployments without this.
+Fix: Add a separate release workflow (triggered on tag or main merge) that logs into ECR/GHCR and pushes the image.
+
+8. listScimGroupMembers has no tenant isolation
+File: apps/api/src/repository.ts line 1481
+tsasync listScimGroupMembers(groupId: string) {
+  // Queries by group_id only — no tenant_id check
+  `where gm.group_id = $1`
+}
+A SCIM token for Tenant A that somehow gets a group UUID belonging to Tenant B will retrieve B's attorney list. The SCIM layer passes scimTenantId but doesn't propagate it to this method.
+Fix: Add tenantId parameter and join through scim_groups:
+tsasync listScimGroupMembers(groupId: string, tenantId: string) {
+  // Add: AND EXISTS (SELECT 1 FROM scim_groups sg WHERE sg.id = gm.group_id AND sg.tenant_id = $2)
+}
+
+9. OCR — runOpenAiImageOcr encodes entire file buffer with no size check
+File: apps/api/src/ocr.ts line 17
+tsconst dataUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
+A 25 MB file becomes ~33 MB base64 in memory before being sent as the request body. OpenAI's Vision API has a 20 MB per-image limit. There is no pre-flight size check, so oversized files will fail with an opaque 400 from OpenAI after wasting memory and network.
+Fix: Add a guard before encoding:
+tsconst MAX_VISION_BYTES = 18 * 1024 * 1024; // 18MB headroom
+if (buffer.length > MAX_VISION_BYTES) {
+  throw new Error(`File too large for Vision OCR (${buffer.length} bytes). Use Azure Document Intelligence for large files.`);
+}
+
+10. Azure OCR polling uses fetch() with no AbortController — can hang indefinitely
+File: apps/api/src/ocr.ts — the polling loop runs up to 45 seconds (30 × 1.5s), but each individual fetch() call within the loop has no timeout. If the Azure endpoint is slow but not erroring, a single fetch can block the event loop for minutes.
+Fix: Wrap each fetch with an AbortController:
+tsconst controller = new AbortController();
+const timer = setTimeout(() => controller.abort(), 15_000);
+const resultResponse = await fetch(operationLocation, {
+  signal: controller.signal, headers: { ... }
+});
+clearTimeout(timer);
+
+11. No OpenAI circuit breaker — 120s timeouts will exhaust the connection pool during outages
+File: apps/api/src/openaiClient.ts
+The client is configured with timeout: 120_000. During an OpenAI outage, every AI request (clause extraction, risk assessment, research, OCR) will block for 2 minutes each. With a DB pool of 10 and a typical AI request consuming one pool slot for the duration, 10 concurrent users during an outage will exhaust the connection pool.
+Fix: Add a simple circuit breaker pattern (or use opossum) that fast-fails AI calls when the error rate is high, and return a graceful degraded response.
+
+12. Missing database index on documents(tenant_id, ingestion_status)
+File: db/schema.sql
+The dashboard, document list filters, and several repository queries filter by both tenant_id and ingestion_status together. The only document index is idx_documents_matter on (matter_id, created_at). At scale (10k+ documents per tenant), filtered queries will do sequential scans.
+Fix:
+sqlCREATE INDEX IF NOT EXISTS idx_documents_tenant_status
+  ON documents (tenant_id, ingestion_status, created_at DESC);
+
+🟡 Moderate — Fix Before Series A Customers
+13. Offset-based pagination — degrades at scale
+All list* functions use LIMIT n OFFSET m. PostgreSQL must scan and discard m rows to serve each page. At offset 5000 on a large tenant, this becomes very slow.
+Fix: Switch to keyset (cursor) pagination using created_at + id as the cursor:
+sqlWHERE tenant_id = $1 AND (created_at, id) < ($cursor_at, $cursor_id)
+ORDER BY created_at DESC, id DESC LIMIT $page_size
+
+14. getDocumentEmbeddings and getAllDocumentChunks are dead code — remove or guard
+Both functions exist in repository.ts but are never called from services.ts (which correctly uses searchSimilarChunks). getAllDocumentChunks loads up to 2000 halfvec(3072) embeddings (~24 MB of float data) into Node.js heap in one shot. Dead code that's also a memory bomb — remove it.
+
+15. No NODE_OPTIONS heap configuration in Dockerfiles
+Files: Dockerfile.api, Dockerfile.worker
+Node.js defaults to ~1.5 GB max heap. Ingesting a large document with many chunks and generating embeddings concurrently will spike heap usage. No explicit NODE_OPTIONS means you're at the mercy of the default.
+Fix: Add to your CMD or as an ENV:
+dockerfileENV NODE_OPTIONS="--max-old-space-size=1024"
+Tune per container memory allocation.
+
+16. ocr.ts — scanned multi-page PDF is sent to Vision as a single data URL
+File: apps/api/src/ocr.ts line 154
+When unpdf returns empty text for a scanned PDF, the fallback sends the entire raw PDF binary as an input_image data URL. OpenAI Vision renders PDFs as a single preview image — only the first page is analysed. Pages 2–N of a scanned legal contract are silently ignored.
+Fix: For multi-page scanned PDFs, switch to Azure Document Intelligence (which natively handles multi-page PDFs) or use a PDF-to-image library to render each page separately and batch the Vision calls.
+
+17. No pino-pretty transport separation — JSON logs in dev are unreadable
+File: apps/api/src/index.ts line 18
+Fastify({ logger: true }) produces raw JSON logs in all environments. In development this makes logs hard to read. In production you want JSON. The standard fix is:
+tsconst app = Fastify({
+  logger: config.nodeEnv === "production"
+    ? true
+    : { transport: { target: "pino-pretty" } }
+});
+Add pino-pretty as a devDependency.
+
+18. Health endpoint reveals full dependency topology on failure
+File: apps/api/src/routes.ts — /health/ready calls checkDatabaseConnection, checkStorageHealth, checkEmailHealth, checkMalwareHealth and if any throw, the default error handler may reveal internal URLs or hostnames in staging.
+Fix: Catch each check individually and return a structured { db: "ok", storage: "fail" } with a 503 — same for load balancers, but doesn't leak topology on partial failure.
+
+🔵 Scale Improvements (Plan Before 100+ Tenants)
+These aren't bugs but will become painful as you scale:
+S3 presigned URLs for downloads — currently the API reads the file from S3 into memory and streams it to the client. For a 25 MB document, that's 25 MB through your API container per download. Use GetObjectCommand presigned URLs and redirect the client directly to S3.
+Separate worker queue metrics — the current polling approach (5s interval) has no dead letter queue, no job priority, and no visibility into queue depth. Consider BullMQ with Redis or AWS SQS as you scale beyond a few workers.
+Read replica for vector search — HNSW search on document_chunks is CPU-heavy. Isolate it to a read replica so it doesn't contend with write traffic on the primary.
+OpenAI key rotation without downtime — there's no mechanism to hot-swap OPENAI_API_KEY without restarting all containers. Plan for this early (store it in AWS Secrets Manager with a rotation lambda).
+
+Issue #19 — No metrics endpoint — tracing without metrics is half an observability stack
+Severity: 🟠 Major
+You have OpenTelemetry tracing (tracing.ts), which gives you distributed traces. But there is no prom-client and no /metrics endpoint. This means:
+
+You cannot build Grafana dashboards for throughput, error rate, p95 latency, or queue depth
+You cannot configure auto-scaling rules in ECS/Kubernetes based on request volume
+You cannot set alert thresholds on error rates in Datadog/Grafana
+
+OTel traces tell you what happened in one request. Metrics tell you how the system is behaving right now across all requests. You need both.
+Fix: Add prom-client and a /metrics scrape endpoint:
+ts// apps/api/src/index.ts
+import client from "prom-client";
+const register = new client.Registry();
+client.collectDefaultMetrics({ register });
+
+// Custom metrics
+const httpRequestDuration = new client.Histogram({
+  name: "http_request_duration_seconds",
+  help: "HTTP request duration",
+  labelNames: ["method", "route", "status"],
+  registers: [register]
+});
+
+app.get("/metrics", { logLevel: "silent" }, async (_req, reply) => {
+  reply.header("Content-Type", register.contentType);
+  return register.metrics();
+});
+Add METRICS_PORT to your env vars if you want to serve metrics on a separate port (recommended — don't expose /metrics publicly).
+
+Issue #20 — services.ts is a 2,850-line monolith — will become unmaintainable
+Severity: 🟡 Moderate
+services.ts    2,850 lines
+repository.ts  2,422 lines
+routes.ts      1,168 lines
+services.ts contains every domain: auth, documents, matters, clauses, flags, research, SCIM, SSO, SAML, WebAuthn, playbooks, usage, invitations. Adding a new feature requires navigating and editing a file that is already longer than most entire codebases. It will become a merge conflict hotspot as soon as more than one person works on it simultaneously.
+Fix: Split into domain-scoped service modules. The apps/api/src/services/ directory already exists but only contains a stub. Migrate by domain:
+apps/api/src/services/
+  auth.service.ts        (login, logout, MFA, passkeys, SSO, SAML)
+  document.service.ts    (upload, ingest, OCR, search)
+  matter.service.ts      (matters, clauses, flags, playbooks)
+  tenant.service.ts      (tenant admin, attorneys, invitations, SCIM)
+  research.service.ts    (RAG query, research history)
+  usage.service.ts       (token tracking, billing events)
+  index.ts               (re-export legalWorkflowService facade)
+No logic changes needed — pure refactoring. Do this before the codebase grows further.
+
+Issue #21 — Email delivery is synchronous and blocks API requests
+Severity: 🟡 Moderate
+sendInvitationEmail and sendPasswordResetEmail are called with await inline inside service methods:
+ts// services.ts line 2142
+await sendInvitationEmail({ to: email, ... });  // blocks the HTTP request
+If your SMTP server is slow (common on cold connections), times out, or is temporarily unavailable, the invitation and password-reset API endpoints will hang or return 500s — even though the database write succeeded. A user invited successfully in the DB appears to get an error.
+Fix (short-term): Fire-and-forget with structured error logging so the API always returns 200 regardless of SMTP:
+tssendInvitationEmail({ to: email, ... }).catch((err) => {
+  request.log.error({ err, email }, "Failed to send invitation email");
+});
+Fix (long-term): Push email jobs onto your existing workflow_jobs queue with a new email.send job type. The worker handles delivery with retry. This gives you delivery receipts and a retry trail — important for a legal platform where invitation delivery must be auditable.
+
+Issue #22 — docker-compose.yml has no api or worker service — full local stack is undocumented
+Severity: 🟡 Moderate
+The compose file defines only postgres, minio, and createbucket. There are no api or worker service definitions. A new developer running docker compose up gets only the infrastructure — they then need to figure out how to wire up the app services themselves. This also means there are no restart: unless-stopped policies, no dependency ordering between the app and its databases, and no shared env file reference.
+Fix: Add app service definitions:
+yaml# docker-compose.yml
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "4000:4000"
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "3000:3000"
+    env_file: .env
+    depends_on:
+      - api
+    restart: unless-stopped
+
+Updated Complete Priority List
+PriorityIssueEffort🔴 1trustProxy: true in Fastify1 line🔴 2cleanupExpiredRefreshTokens scheduled~5 lines🔴 3float8[] → halfvec in legacy updateDocument1 word🔴 4storage.ts cross-fs rename() → copy+unlink~10 lines🔴 5Redis-backed rate limiting~20 lines + infra🟠 6SCIM listGroupMembers missing tenant check~5 lines🟠 7CI Docker push (no CD path)~20 lines YAML🟠 8DEMO_* vars optional when SEED_DEMO_DATA=false~15 lines🟠 9OCR Vision size guard before base64 encode~5 lines🟠 10Azure OCR fetch AbortController timeout~10 lines🟠 11OpenAI circuit breaker~30 lines🟠 12Missing idx_documents_tenant_status index1 SQL line🟠 19Prometheus /metrics endpoint~30 lines + prom-client🟡 13Offset → cursor-based paginationMedium refactor🟡 14Remove dead code: getAllDocumentChunks, getDocumentEmbeddingsDelete🟡 15NODE_OPTIONS heap size in Dockerfiles1 line🟡 16Multi-page scanned PDF OCR (Vision only sees page 1)Medium🟡 17pino-pretty for dev logs~5 lines🟡 18Health endpoint topology leak on partial failure~15 lines🟡 20Split services.ts monolith into domain modulesLarge refactor🟡 21Email delivery async / worker-queued~20 lines🟡 22Add api/worker/web to docker-compose.yml~30 lines YAML

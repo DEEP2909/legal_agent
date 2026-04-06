@@ -243,7 +243,8 @@ function buildScimUserFromRow(row: Record<string, unknown>) {
 }
 
 async function buildScimGroupFromRow(row: Record<string, unknown>) {
-  const members = await repository.listScimGroupMembers(String(row.id));
+  const tenantId = String(row.tenant_id);
+  const members = await repository.listScimGroupMembers(String(row.id), tenantId);
   return {
     schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"],
     id: String(row.id),
@@ -1028,11 +1029,14 @@ export const legalWorkflowService = {
     const resetUrl = buildWebRedirectUrl("/", {
       resetToken: rawToken
     });
-    await sendPasswordResetEmail({
+    // Fire-and-forget email with error logging - API returns success regardless of email delivery
+    sendPasswordResetEmail({
       to: String(attorney.email),
       fullName: String(attorney.full_name ?? attorney.email),
       tenantName: "Legal Agent Workspace",
       resetUrl
+    }).catch((err) => {
+      console.error("[email] Failed to send password reset email:", err);
     });
 
     return {
@@ -2139,11 +2143,14 @@ export const legalWorkflowService = {
       }
     });
 
-    await sendInvitationEmail({
+    // Fire-and-forget email with error logging - API returns success regardless of email delivery
+    sendInvitationEmail({
       to: invitation.email,
       fullName: invitation.fullName,
       tenantName: (await repository.getDashboard(session.tenantId)).tenant?.name ?? "Legal Agent",
       inviteUrl: buildWebRedirectUrl("/", { inviteToken: rawToken })
+    }).catch((err) => {
+      console.error("[email] Failed to send invitation email:", err);
     });
 
     return {

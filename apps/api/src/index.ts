@@ -9,13 +9,22 @@ import formbody from "@fastify/formbody";
 import helmet from "@fastify/helmet";
 import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
+import Redis from "ioredis";
 import { config } from "./config.js";
 import { closeDatabase, initializeDatabase } from "./database.js";
 import { registerRoutes } from "./routes.js";
 import { ensureDirectories } from "./storage.js";
 import { startWorker } from "./worker.js";
 
-const app = Fastify({ logger: true });
+const app = Fastify({
+  logger: config.nodeEnv === "production"
+    ? true
+    : { transport: { target: "pino-pretty" } },
+  trustProxy: true
+});
+
+// Redis client for distributed rate limiting (optional)
+const redis = config.redisUrl ? new Redis(config.redisUrl) : undefined;
 
 // Security headers
 await app.register(helmet, {
@@ -67,7 +76,8 @@ await app.register(csrf, {
 
 await app.register(rateLimit, {
   max: 100,
-  timeWindow: "1 minute"
+  timeWindow: "1 minute",
+  redis
 });
 await app.register(formbody);
 await app.register(multipart, {

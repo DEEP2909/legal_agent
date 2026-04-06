@@ -1478,14 +1478,15 @@ export const repository = {
     return result.rows[0] ?? null;
   },
 
-  async listScimGroupMembers(groupId: string) {
+  async listScimGroupMembers(groupId: string, tenantId: string) {
     const result = await pool.query(
       `select a.id, a.email, a.full_name
        from scim_group_members gm
        join attorneys a on a.id = gm.attorney_id
        where gm.group_id = $1
+         and exists (select 1 from scim_groups sg where sg.id = gm.group_id and sg.tenant_id = $2)
        order by a.full_name asc`,
-      [groupId]
+      [groupId, tenantId]
     );
 
     return result.rows;
@@ -1697,7 +1698,7 @@ export const repository = {
       await pool.query(
         `insert into document_chunks
          (id, tenant_id, document_id, page_from, page_to, chunk_index, text_content, citation_json, embedding)
-         values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::float8[])`,
+         values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::halfvec)`,
         [
           `${documentId}-chunk-1`,
           next.tenantId,
@@ -1707,7 +1708,7 @@ export const repository = {
           0,
           next.normalizedText.slice(0, 10000),
           JSON.stringify({ source: next.sourceName }),
-          next.embedding
+          `[${next.embedding.join(",")}]`
         ]
       );
     }
@@ -1736,7 +1737,7 @@ export const repository = {
       await pool.query(
         `insert into document_chunks
          (id, tenant_id, document_id, page_from, page_to, chunk_index, text_content, citation_json, embedding)
-         values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::float8[])`,
+         values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::halfvec)`,
         [
           `${documentId}-chunk-${chunk.index}`,
           tenantId,
@@ -1746,7 +1747,7 @@ export const repository = {
           chunk.index,
           chunk.text,
           JSON.stringify({ chunkIndex: chunk.index }),
-          chunk.embedding
+          `[${chunk.embedding.join(",")}]`
         ]
       );
     }
@@ -1891,31 +1892,6 @@ export const repository = {
     return result.rows.map(mapDocument);
   },
 
-  // TODO: Issue #10 — When pgvector extension is available, replace this with a
-  // proper vector similarity search using the <=> operator:
-  //   SELECT d.*, c.embedding <=> $2::halfvec AS distance
-  //   FROM documents d JOIN document_chunks c ON ...
-  //   WHERE d.tenant_id = $1
-  //   ORDER BY distance ASC LIMIT 20
-  async getDocumentEmbeddings(tenantId: string, options?: { limit?: number }) {
-    // Default to 100 documents max for embedding search to avoid memory issues
-    const limit = Math.min(options?.limit ?? 100, 500);
-    const result = await pool.query(
-      `select d.*, c.embedding
-       from documents d
-       left join document_chunks c on c.document_id = d.id and c.chunk_index = 0
-       where d.tenant_id = $1
-       order by d.created_at desc
-       limit $2`,
-      [tenantId, limit]
-    );
-
-    return result.rows.map((row) => ({
-      ...mapDocument(row),
-      embedding: Array.isArray(row.embedding) ? row.embedding.map(Number) : []
-    }));
-  },
-
   /**
    * Vector similarity search using pgvector's <=> cosine distance operator.
    * Returns the most similar document chunks to the query embedding.
@@ -1959,35 +1935,6 @@ export const repository = {
       sourceName: String(row.source_name),
       docType: String(row.doc_type ?? ""),
       matterId: String(row.matter_id ?? "")
-    }));
-  },
-
-  /**
-   * Get all document chunks with embeddings for semantic search.
-   * Returns chunks from all documents in the tenant.
-   */
-  async getAllDocumentChunks(tenantId: string, options?: { limit?: number }) {
-    const limit = Math.min(options?.limit ?? 500, 2000);
-    const result = await pool.query(
-      `select c.id, c.document_id, c.chunk_index, c.text_content, c.embedding,
-              d.source_name, d.doc_type, d.matter_id
-       from document_chunks c
-       join documents d on d.id = c.document_id
-       where c.tenant_id = $1
-       order by d.created_at desc, c.chunk_index asc
-       limit $2`,
-      [tenantId, limit]
-    );
-
-    return result.rows.map((row) => ({
-      id: String(row.id),
-      documentId: String(row.document_id),
-      chunkIndex: Number(row.chunk_index),
-      textContent: String(row.text_content),
-      embedding: Array.isArray(row.embedding) ? row.embedding.map(Number) : [],
-      sourceName: String(row.source_name),
-      docType: String(row.doc_type ?? ""),
-      matterId: String(row.matter_id)
     }));
   },
 

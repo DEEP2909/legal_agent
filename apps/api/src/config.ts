@@ -21,15 +21,9 @@ const schema = z
     OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-large"),
     DATA_DIR: z.string().default("./data"),
     FILE_STORAGE_DIR: z.string().default("./storage"),
-    DEMO_API_KEY: z.string().min(24, "DEMO_API_KEY must be at least 24 characters"),
-    DEMO_USER_EMAIL: z.string().email("DEMO_USER_EMAIL must be a valid email"),
-    DEMO_USER_PASSWORD: z
-      .string()
-      .min(12, "DEMO_USER_PASSWORD must be at least 12 characters")
-      .regex(/[A-Z]/, "DEMO_USER_PASSWORD must contain uppercase letter")
-      .regex(/[a-z]/, "DEMO_USER_PASSWORD must contain lowercase letter")
-      .regex(/[0-9]/, "DEMO_USER_PASSWORD must contain number")
-      .regex(/[^A-Za-z0-9]/, "DEMO_USER_PASSWORD must contain special character"),
+    DEMO_API_KEY: z.string().default(""),
+    DEMO_USER_EMAIL: z.string().default(""),
+    DEMO_USER_PASSWORD: z.string().default(""),
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
     STORAGE_BACKEND: z.enum(["local", "s3"]).default("local"),
     S3_REGION: z.string().default("ap-south-1"),
@@ -76,6 +70,8 @@ const schema = z
     DB_POOL_MAX: z.coerce.number().default(10),
     DB_IDLE_TIMEOUT_MS: z.coerce.number().default(30000),
     DB_CONNECT_TIMEOUT_MS: z.coerce.number().default(10000),
+    // Redis for distributed rate limiting (optional)
+    REDIS_URL: z.string().default(""),
     // Demo data seeding - must be explicitly opted-in
     SEED_DEMO_DATA: booleanFromString.default(false)
   })
@@ -118,6 +114,31 @@ const schema = z
           "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT and AZURE_DOCUMENT_INTELLIGENCE_KEY are required for Azure OCR.",
         path: ["AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT"]
       });
+    }
+
+    // DEMO_* vars are only required when SEED_DEMO_DATA is true
+    if (env.SEED_DEMO_DATA) {
+      if (!env.DEMO_API_KEY || env.DEMO_API_KEY.length < 24) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DEMO_API_KEY must be at least 24 characters when SEED_DEMO_DATA=true",
+          path: ["DEMO_API_KEY"]
+        });
+      }
+      if (!env.DEMO_USER_EMAIL || !z.string().email().safeParse(env.DEMO_USER_EMAIL).success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DEMO_USER_EMAIL must be a valid email when SEED_DEMO_DATA=true",
+          path: ["DEMO_USER_EMAIL"]
+        });
+      }
+      if (!env.DEMO_USER_PASSWORD || env.DEMO_USER_PASSWORD.length < 12) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "DEMO_USER_PASSWORD must be at least 12 characters when SEED_DEMO_DATA=true",
+          path: ["DEMO_USER_PASSWORD"]
+        });
+      }
     }
   });
 
@@ -180,6 +201,7 @@ export const config = {
   dbPoolMax: env.DB_POOL_MAX,
   dbIdleTimeoutMs: env.DB_IDLE_TIMEOUT_MS,
   dbConnectTimeoutMs: env.DB_CONNECT_TIMEOUT_MS,
+  redisUrl: env.REDIS_URL,
   seedDemoData: env.SEED_DEMO_DATA
 } as const;
 

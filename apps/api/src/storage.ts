@@ -6,7 +6,7 @@ import {
   PutObjectCommand,
   S3Client
 } from "@aws-sdk/client-s3";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
@@ -155,7 +155,17 @@ export async function moveStoredObject(input: { fromPath: string; toPath: string
   }
 
   await mkdir(dirname(input.toPath), { recursive: true });
-  await rename(input.fromPath, input.toPath);
+  try {
+    await rename(input.fromPath, input.toPath);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "EXDEV") {
+      // Cross-filesystem move: copy then delete
+      await copyFile(input.fromPath, input.toPath);
+      await unlink(input.fromPath);
+    } else {
+      throw err;
+    }
+  }
   return { storagePath: input.toPath };
 }
 

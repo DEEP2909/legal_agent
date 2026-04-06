@@ -249,6 +249,19 @@ export function startWorker() {
     writeHeartbeat(); // Also write heartbeat on each poll cycle
     void processPendingDocuments();
   }, config.jobPollIntervalMs);
+  
+  // Cleanup expired tokens and auth states periodically
+  setInterval(async () => {
+    try {
+      const deletedTokens = await repository.cleanupExpiredRefreshTokens();
+      if (deletedTokens > 0) {
+        console.log(`[Worker] Cleaned up ${deletedTokens} expired refresh tokens`);
+      }
+    } catch (error) {
+      console.error("[Worker] Error cleaning up expired tokens:", error);
+    }
+  }, 6 * 60 * 60 * 1000); // every 6 hours
+  
   void processPendingDocuments();
 }
 

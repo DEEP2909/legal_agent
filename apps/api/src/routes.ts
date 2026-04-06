@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { fileTypeFromBuffer } from "file-type";
+import client from "prom-client";
 import {
   requireAuth,
   requirePlatformAdmin,
@@ -17,6 +18,37 @@ import { checkMalwareHealth } from "./malware.js";
 import { checkStorageHealth, persistUpload } from "./storage.js";
 import { repository } from "./repository.js";
 import { PASSWORD_RULES, validatePassword as sharedValidatePassword } from "@legal-agent/shared";
+
+// Prometheus metrics registry
+const register = new client.Registry();
+client.collectDefaultMetrics({ register });
+
+// Custom HTTP request duration histogram
+const httpRequestDuration = new client.Histogram({
+  name: "http_request_duration_seconds",
+  help: "HTTP request duration in seconds",
+  labelNames: ["method", "route", "status"],
+  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+  registers: [register]
+});
+
+// Active requests gauge
+const activeRequests = new client.Gauge({
+  name: "http_requests_active",
+  help: "Number of active HTTP requests",
+  registers: [register]
+});
+
+// Document ingestion counter
+const documentsIngested = new client.Counter({
+  name: "documents_ingested_total",
+  help: "Total number of documents ingested",
+  labelNames: ["status"],
+  registers: [register]
+});
+
+// Export metrics for use in other modules if needed
+export { httpRequestDuration, activeRequests, documentsIngested };
 
 const allowedMimeTypes = new Set([
   "application/pdf",
@@ -77,12 +109,68 @@ const platformAdminRateLimit = {
 
 export async function registerRoutes(app: FastifyInstance) {
   app.get("/health/live", async () => ({ ok: true }));
-  app.get("/health/ready", async () => {
-    // Check all dependencies but don't expose topology details
-    await checkDatabaseConnection();
-    await Promise.all([checkStorageHealth(), checkEmailHealth(), checkMalwareHealth()]);
-    // Return minimal response - load balancers only need 200 status
-    return { ok: true };
+  app.get("/health/ready", async (_request, reply) => {
+    // Check each dependency individually and report structured status
+    const status: Record<string, "ok" | "fail"> = {
+      db: "ok",
+      storage: "ok",
+      email: "ok",
+      malware: "ok"
+    };
+    let hasFailure = false;
+
+    try {
+      await checkDatabaseConnection();
+    } catch {
+      status.db = "fail";
+      hasFailure = true;
+    }
+
+    try {
+      await checkStorageHealth();
+    } catch {
+      status.storage = "fail";
+      hasFailure = true;
+    }
+
+    try {
+      await checkEmailHealth();
+    } catch {
+      status.email = "fail";
+      hasFailure = true;
+    }
+
+    try {
+      await checkMalwareHealth();
+    } catch {
+      status.malware = "fail";
+      hasFailure = true;
+    }
+
+    if (hasFailure) {
+      reply.code(503);
+    }
+    return { ok: !hasFailure, ...status };
+  });
+
+  // Prometheus metrics endpoint (don't expose publicly in production - use internal port)
+  app.get("/metrics", { logLevel: "silent" }, async (_request, reply) => {
+    reply.header("Content-Type", register.contentType);
+    return register.metrics();
+  });
+
+  // Instrument all requests with metrics
+  app.addHook("onRequest", async () => {
+    activeRequests.inc();
+  });
+
+  app.addHook("onResponse", async (request, reply) => {
+    activeRequests.dec();
+    const route = request.routeOptions?.url ?? request.url;
+    httpRequestDuration.observe(
+      { method: request.method, route, status: reply.statusCode },
+      reply.elapsedTime / 1000
+    );
   });
 
   // CSRF token endpoint - client should call this before login
