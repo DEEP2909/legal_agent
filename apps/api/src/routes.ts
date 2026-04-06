@@ -153,8 +153,11 @@ export async function registerRoutes(app: FastifyInstance) {
     return { ok: !hasFailure, ...status };
   });
 
-  // Prometheus metrics endpoint (don't expose publicly in production - use internal port)
-  app.get("/metrics", { logLevel: "silent" }, async (_request, reply) => {
+  // Prometheus metrics endpoint - requires platform admin auth
+  app.get("/metrics", { 
+    logLevel: "silent",
+    preHandler: requirePlatformAdmin
+  }, async (_request, reply) => {
     reply.header("Content-Type", register.contentType);
     return register.metrics();
   });

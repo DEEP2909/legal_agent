@@ -171,7 +171,14 @@ export async function extractTextForIngestion(storagePath: string, mimeType: str
     }
 
     // For openai provider, use vision OCR on scanned PDFs
+    // WARNING: OpenAI Vision only processes the first page of a PDF
     if (config.ocrProvider === "openai") {
+      if ((totalPages ?? 1) > 1) {
+        console.warn(
+          `[OCR] Multi-page scanned PDF detected (${totalPages} pages) but OCR_PROVIDER=openai. ` +
+          `OpenAI Vision only analyzes page 1. For full document OCR, set OCR_PROVIDER=azure_document_intelligence or hybrid.`
+        );
+      }
       const ocrText = await runOpenAiImageOcr(buffer, mimeType);
       return { text: ocrText, pageCount: totalPages ?? null };
     }

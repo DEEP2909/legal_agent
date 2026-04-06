@@ -2365,5 +2365,163 @@ export const repository = {
       totalTokens: Number(row.total_tokens),
       callCount: Number(row.call_count)
     }));
+  },
+
+  // =========================================================================
+  // CURSOR-BASED PAGINATION
+  // Use these functions for scalable pagination (10k+ records)
+  // Cursor format: base64(JSON({ createdAt, id }))
+  // =========================================================================
+
+  /**
+   * Decode a cursor string to get the (createdAt, id) pair.
+   * Returns null if invalid or no cursor provided.
+   */
+  decodeCursor(cursor?: string): { createdAt: string; id: string } | null {
+    if (!cursor) return null;
+    try {
+      const decoded = Buffer.from(cursor, "base64").toString("utf-8");
+      const parsed = JSON.parse(decoded);
+      if (typeof parsed.createdAt === "string" && typeof parsed.id === "string") {
+        return parsed;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Encode a cursor from (createdAt, id) pair.
+   */
+  encodeCursor(createdAt: string | Date, id: string): string {
+    const timestamp = createdAt instanceof Date ? createdAt.toISOString() : createdAt;
+    return Buffer.from(JSON.stringify({ createdAt: timestamp, id })).toString("base64");
+  },
+
+  /**
+   * List documents with cursor-based pagination.
+   * Returns items plus nextCursor for fetching the next page.
+   */
+  async listDocumentsCursor(
+    tenantId: string,
+    options?: {
+      matterId?: string;
+      status?: string;
+      cursor?: string;
+      limit?: number;
+    }
+  ): Promise<{ items: DocumentRecord[]; nextCursor: string | null }> {
+    const limit = Math.min(options?.limit ?? 50, 100);
+    const cursor = this.decodeCursor(options?.cursor);
+    
+    const params: (string | number)[] = [tenantId, limit + 1]; // +1 to detect hasMore
+    let whereClause = "WHERE tenant_id = $1";
+    
+    if (options?.matterId) {
+      params.push(options.matterId);
+      whereClause += ` AND matter_id = $${params.length}`;
+    }
+    
+    if (options?.status) {
+      params.push(options.status);
+      whereClause += ` AND ingestion_status = $${params.length}`;
+    }
+    
+    if (cursor) {
+      params.push(cursor.createdAt, cursor.id);
+      whereClause += ` AND (created_at, id) < ($${params.length - 1}, $${params.length})`;
+    }
+    
+    const result = await pool.query(
+      `SELECT ${COLS.documents} FROM documents
+       ${whereClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $2`,
+      params
+    );
+    
+    const rows = result.rows.map(mapDocument);
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    
+    const lastItem = items[items.length - 1];
+    const nextCursor = hasMore && lastItem?.createdAt && lastItem.id
+      ? this.encodeCursor(lastItem.createdAt, lastItem.id)
+      : null;
+    
+    return { items, nextCursor };
+  },
+
+  /**
+   * List research queries with cursor-based pagination.
+   */
+  async listResearchHistoryCursor(
+    tenantId: string,
+    options?: {
+      attorneyId?: string;
+      cursor?: string;
+      limit?: number;
+    }
+  ): Promise<{
+    items: Array<{
+      id: string;
+      tenantId: string;
+      attorneyId?: string;
+      question: string;
+      answer: string;
+      modelName?: string;
+      sourceDocumentIds: string[];
+      contextUsed?: string;
+      createdAt?: string;
+    }>;
+    nextCursor: string | null;
+  }> {
+    const limit = Math.min(options?.limit ?? 50, 100);
+    const cursor = this.decodeCursor(options?.cursor);
+    
+    const params: (string | number)[] = [tenantId, limit + 1];
+    let whereClause = "WHERE tenant_id = $1";
+    
+    if (options?.attorneyId) {
+      params.push(options.attorneyId);
+      whereClause += ` AND attorney_id = $${params.length}`;
+    }
+    
+    if (cursor) {
+      params.push(cursor.createdAt, cursor.id);
+      whereClause += ` AND (created_at, id) < ($${params.length - 1}, $${params.length})`;
+    }
+    
+    const result = await pool.query(
+      `SELECT id, tenant_id, attorney_id, question, answer, model_name, source_document_ids, context_used, created_at
+       FROM research_queries
+       ${whereClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $2`,
+      params
+    );
+    
+    const rows = result.rows.map((row) => ({
+      id: String(row.id),
+      tenantId: String(row.tenant_id),
+      attorneyId: row.attorney_id ? String(row.attorney_id) : undefined,
+      question: String(row.question),
+      answer: String(row.answer ?? ""),
+      modelName: row.model_name ? String(row.model_name) : undefined,
+      sourceDocumentIds: Array.isArray(row.source_document_ids) ? row.source_document_ids : [],
+      contextUsed: row.context_used ? String(row.context_used) : undefined,
+      createdAt: row.created_at ? new Date(String(row.created_at)).toISOString() : undefined
+    }));
+    
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    
+    const lastItem = items[items.length - 1];
+    const nextCursor = hasMore && lastItem?.createdAt && lastItem.id
+      ? this.encodeCursor(lastItem.createdAt, lastItem.id)
+      : null;
+    
+    return { items, nextCursor };
   }
 };
