@@ -2,6 +2,11 @@ All issues have been addressed as of this commit.
 
 # Fixed Issues
 
+## Security: Refresh Token Rotation on Login ✅
+Fixed single-session enforcement by revoking all existing refresh tokens when a user logs in.
+This prevents compromised tokens from persisting after password re-authentication and ensures
+only one active session per user.
+
 ## #7 — CI release pipeline ✅
 Created `.github/workflows/release.yml` that triggers on tags (v*) and push to main.
 Builds and pushes API, Worker, and Web images to GHCR with proper tagging.
