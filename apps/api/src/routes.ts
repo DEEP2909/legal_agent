@@ -222,6 +222,9 @@ export async function registerRoutes(app: FastifyInstance) {
           maxAge: getRefreshTokenTTLDays() * 24 * 60 * 60
         });
         
+        // Revoke all existing refresh tokens before creating new one (single session enforcement)
+        await repository.revokeAllRefreshTokens(result.session.attorneyId);
+        
         // Store refresh token hash in database
         await repository.createRefreshToken(
           result.session.tenantId,
